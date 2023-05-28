@@ -20,6 +20,7 @@ else()
     add_definitions(-DUSE_DOUBLE_PRECISION=0)
 endif()
 OPTION(RENDERER_BUILD_CPU_KERNELS "Build CPU paths for the rendering kernels in addition to CUDA" ON)
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
 ####################################
 # C++ standard
@@ -47,11 +48,15 @@ if(COMMAND CUDA_SELECT_NVCC_ARCH_FLAGS)
         LIST(APPEND CUDA_NVCC_FLAGS "${ARCH_FLAGS2}")
         message(STATUS "cuda flags: ${ARCH_FLAGS2}")
 	else() # server
-		CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS 6.1)
-        LIST(APPEND CUDA_NVCC_FLAGS "-arch=compute_61 -code=sm_61")
+		#CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS 6.1)
+        #LIST(APPEND CUDA_NVCC_FLAGS "-arch=compute_61 -code=sm_61")
+		CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS Auto)
+        STRING(REPLACE ";" "=" ARCH_FLAGS2 "${ARCH_FLAGS}")
+        LIST(APPEND CUDA_NVCC_FLAGS "${ARCH_FLAGS2}")
+        message(STATUS "cuda flags: ${ARCH_FLAGS2}")
 	endif()
 endif()
-list(APPEND CUDA_NVCC_FLAGS "-std=c++17" "--use_fast_math" "--generate-line-info" "--expt-relaxed-constexpr" "--extended-lambda" "–Xptxas" "-v")
+list(APPEND CUDA_NVCC_FLAGS "-std=c++17" "--use_fast_math" "--generate-line-info" "--expt-relaxed-constexpr" "--extended-lambda" "-Xptxas" "-v")
 set(MY_CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS})
 set(CUDA_SEPARABLE_COMPILATION ON)
 message(STATUS "final cuda flags: ${MY_CUDA_NVCC_FLAGS}")
@@ -158,7 +163,7 @@ endif()
 # THIRD PARTY
 ####################################
 add_subdirectory(third-party/lz4)
-set_property(TARGET lz4 PROPERTY CUDA_ARCHITECTURES 61 72)
+set_property(TARGET lz4 PROPERTY CUDA_ARCHITECTURES 61 72 86)
 
 ####################################
 # THE LIBRARY
@@ -180,7 +185,7 @@ cmrc_add_resource_library(
 	)
 #set_property(TARGET ${LIBRARY_NAME}-kernels PROPERTY
 #	    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-set_property(TARGET ${LIBRARY_NAME}-kernels PROPERTY CUDA_ARCHITECTURES 61 72)
+set_property(TARGET ${LIBRARY_NAME}-kernels PROPERTY CUDA_ARCHITECTURES 61 72 86)
 
 ####################################
 # TEST APPLICATION

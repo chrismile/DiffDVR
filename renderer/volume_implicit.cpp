@@ -56,7 +56,17 @@ namespace {
 		}
 	};
 
-	struct ImplicitEquation_SPHERE
+    struct ImplicitEquation_CUBEX
+    {
+        static constexpr float boxMin = -1;
+        static constexpr float boxMax = +1;
+        static float eval(float x, float y, float z, const std::unordered_map<std::string, float>& params)
+        {
+            return (x - boxMin) / (boxMax - boxMin);
+        }
+    };
+
+    struct ImplicitEquation_SPHERE
 	{
 		static constexpr float boxMin = -1;
 		static constexpr float boxMax = +1;
@@ -235,7 +245,8 @@ std::unique_ptr<renderer::Volume> renderer::Volume::createImplicitDataset(int re
 	switch (equation)
 	{
 		CASE(MARSCHNER_LOBB);
-		CASE(CUBE);
+        CASE(CUBE);
+        CASE(CUBEX);
 		CASE(SPHERE);
 		CASE(INVERSE_SPHERE);
 		CASE(DING_DONG);

@@ -1,7 +1,9 @@
-import numpy as np
-import torch
 import sys
 import os
+sys.path.append(os.getcwd())
+
+import numpy as np
+import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation
 import tqdm
@@ -50,7 +52,7 @@ if __name__=='__main__':
   print(pyrenderer.__doc__)
 
   print("Create Marschner Lobb")
-  volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.MarschnerLobb, 64)
+  volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.CubeX, 64)
   volume.copy_to_gpu()
   print("density tensor: ", volume.getDataGpu(0).shape, volume.getDataGpu(0).dtype, volume.getDataGpu(0).device)
 
@@ -68,16 +70,16 @@ if __name__=='__main__':
   camera_origin = np.array([0.0, -0.71, -0.70])
   camera_lookat = np.array([0.0, 0.0, 0.0])
   camera_up = np.array([0,-1,0])
-  opacity_scaling = 25.0
+  opacity_scaling = 10.0
 
   tf_mode = pyrenderer.TFMode.Linear
   tf = torch.tensor([[
     #r,g,b,a,pos
-    [0.9,0.01,0.01,0.001,0],
-    [0.9,0.58,0.46,0.001,0.45],
-    [0.9,0.61,0.50,0.8*opacity_scaling,0.5],
-    [0.9,0.66,0.55,0.001,0.55],
-    [0.9,0.99,0.99,0.001,1]
+    [0.2313,0.2980,0.7529,0.0 *opacity_scaling,0],
+    [0.5647,0.6980,0.9960,0.25*opacity_scaling,0.25],
+    [0.8627,0.8627,0.8627,0.5 *opacity_scaling,0.5],
+    [0.9607,0.6117,0.4901,0.75*opacity_scaling,0.75],
+    [0.7058,0.0156,0.1490,1.0 *opacity_scaling,1]
   ]], dtype=dtype, device=device)
 
   invViewMatrix = pyrenderer.Camera.compute_matrix(
@@ -102,13 +104,13 @@ if __name__=='__main__':
 
   print("Create forward difference settings")
   differences_settings = pyrenderer.ForwardDifferencesSettings()
-  differences_settings.D = 4*3 # I want gradients for all inner control points
+  differences_settings.D = 4*5 # I want gradients for all control points
   derivative_tf_indices = torch.tensor([[
-    [-1,-1,-1,-1,-1],
     [0,1,2,3,-1],
     [4,5,6,7,-1],
     [8,9,10,11,-1],
-    [-1, -1, -1, -1, -1]
+    [12,13,14,15,-1],
+    [16,17,18,19,-1]
   ]], dtype=torch.int32)
   differences_settings.d_tf = derivative_tf_indices.to(device=device)
   differences_settings.has_tf_derivatives = True
@@ -130,11 +132,11 @@ if __name__=='__main__':
   print("Render initial")
   initial_tf = torch.tensor([[
     # r,g,b,a,pos
-    [0.9,0.01,0.01,0.001,0],
-    [0.2, 0.4, 0.3, 10, 0.45],
-    [0.6, 0.7, 0.2, 7, 0.5],
-    [0.5, 0.6, 0.4, 5, 0.55],
-    [0.9,0.99,0.99,0.001,1]
+    [0.7058,0.0156,0.1490,1.0 *opacity_scaling,0],
+    [0.9607,0.6117,0.4901,1.0 *opacity_scaling,0.25],
+    [0.8627,0.8627,0.8627,1.0 *opacity_scaling,0.5],
+    [0.5647,0.6980,0.9960,1.0 *opacity_scaling,0.75],
+    [0.2313,0.2980,0.7529,1.0 *opacity_scaling,1]
   ]], dtype=dtype, device=device)
   print("Initial tf (original):", initial_tf)
   inputs.tf = initial_tf
@@ -184,7 +186,7 @@ if __name__=='__main__':
   model = OptimModel()
 
   # run optimization
-  iterations = 200
+  iterations = 400
   reconstructed_color = []
   reconstructed_tf = []
   reconstructed_loss = []

@@ -163,7 +163,8 @@ public:
 	enum class ImplicitEquation
 	{
 		MARSCHNER_LOBB, //params "fM", "alpha"
-		CUBE, //param "scale"
+        CUBE, //param "scale"
+        CUBEX,
 		SPHERE,
 		INVERSE_SPHERE,
 		DING_DONG,

@@ -1,7 +1,8 @@
 
 import sys
 import os
-sys.path.insert(0, os.getcwd())
+#sys.path.insert(0, os.getcwd())
+sys.path.append(os.getcwd())
 
 import numpy as np
 import torch
