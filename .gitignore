@@ -3,3 +3,4 @@ build/
 *.pyc
 /pytests/results/*
 !/pytests/results/__init__.py
+.idea/
