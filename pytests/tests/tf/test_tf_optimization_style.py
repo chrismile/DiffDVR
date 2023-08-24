@@ -98,6 +98,7 @@ if __name__=='__main__':
     data_set_folder = '/media/christoph/Elements/Datasets/Scalar'
   else:
     data_set_folder = '/mnt/data/Flow/Scalar'
+  # VisHuman Head [256 256 256] (CT)/vmhead256cubed.dat
   data_array = load_dat_raw(f'{data_set_folder}/VisHuman Head [512 512 302] (CT)/vmhead.dat')
   print(data_array.shape)
   volume = pyrenderer.Volume.from_numpy(data_array)
@@ -115,11 +116,12 @@ if __name__=='__main__':
 
   # settings
   fov_degree = 45.0
+  fov_radians = np.radians(fov_degree)
   camera_origin = np.array([0.0, -0.71, -0.70])
   camera_lookat = np.array([0.0, 0.0, 0.0])
   camera_up = np.array([0,-1,0])
   #opacity_scaling = 10.0
-  opacity_scaling = 25.0
+  opacity_scaling = 50.0
 
   tf_mode = pyrenderer.TFMode.Linear
   res = 32
@@ -182,11 +184,13 @@ if __name__=='__main__':
   #  [8,9,10,11,-1],
   #  [-1, -1, -1, -1, -1]
   #]], dtype=torch.int32)
-  differences_settings.D = 4*res # We want gradients for all control points
+  differences_settings.D = 4*res + 6 # We want gradients for all control points
   tf_indices = [[i * 4 + j for j in range(4)] + [-1] for i in range(res)]
   derivative_tf_indices = torch.tensor([tf_indices], dtype=torch.int32)
   differences_settings.d_tf = derivative_tf_indices.to(device=device)
   differences_settings.has_tf_derivatives = True
+  differences_settings.d_rayStart = pyrenderer.int3(4*res, 4*res + 1, 4*res + 2)
+  differences_settings.d_rayDir = pyrenderer.int3(4*res + 3, 4*res + 4, 4*res + 5)
 
   print("Create renderer outputs")
   output_color = torch.empty(1, H, W, 4, dtype=dtype, device=device)
@@ -200,6 +204,29 @@ if __name__=='__main__':
   reference_color_gpu = output_color.clone()
   reference_color_image = output_color.cpu().numpy()[0]
   reference_tf = tf.cpu().numpy()[0]
+
+  # set camera settings for optimization view
+  #camera_origin = np.array([0.0, -0.9, 0.44])
+  #camera_lookat = np.array([0.0, 0.0, 0.0])
+  #camera_up = np.array([0,0,1])
+  #invViewMatrix = pyrenderer.Camera.compute_matrix(
+  #  make_real3(camera_origin), make_real3(camera_lookat), make_real3(camera_up),
+  #  fov_degree, W, H)
+  #inputs.camera = invViewMatrix
+  camera_orientation = pyrenderer.Orientation.Ym
+  camera_center = torch.tensor([[0.0, 0.0, 0.0]], dtype=dtype, device=device)
+  camera_initial_pitch = torch.tensor([[np.radians(30)]], dtype=dtype, device=device) # torch.tensor([[np.radians(-14.5)]], dtype=dtype, device=device)
+  camera_initial_yaw = torch.tensor([[np.radians(-20)]], dtype=dtype, device=device) # torch.tensor([[np.radians(113.5)]], dtype=dtype, device=device)
+  camera_initial_distance = torch.tensor([[1.0]], dtype=dtype, device=device)
+  inputs.camera_mode = pyrenderer.CameraMode.RayStartDir
+  viewport = pyrenderer.Camera.viewport_from_sphere(
+    camera_center, camera_initial_yaw, camera_initial_pitch, camera_initial_distance, camera_orientation)
+  ray_start, ray_dir = pyrenderer.Camera.generate_rays(
+    viewport, fov_radians, W, H)
+  inputs.camera = pyrenderer.CameraPerPixelRays(ray_start, ray_dir)
+  current_pitch = camera_initial_pitch.clone()
+  current_yaw = camera_initial_yaw.clone()
+  current_distance = camera_initial_distance.clone()
 
   # initialize initial TF and render
   print("Render initial")
@@ -232,8 +259,9 @@ if __name__=='__main__':
   # Construct the model
   class RendererDerivTF(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, current_tf):
+    def forward(ctx, current_tf, ray_start, ray_dir):
       inputs.tf = current_tf
+      inputs.camera = pyrenderer.CameraPerPixelRays(ray_start, ray_dir)
       # render
       pyrenderer.Renderer.render_forward_gradients(inputs, differences_settings, outputs, gradients_out)
       ctx.save_for_backward(current_tf, gradients_out)
@@ -245,6 +273,7 @@ if __name__=='__main__':
       # to get the adjoint of the tf
       grad_output_color = grad_output_color.unsqueeze(3) # for broadcasting over the derivatives
       gradients = torch.mul(gradients_out, grad_output_color) # adjoint-multiplication
+      gradients_cpy = gradients
       gradients = torch.sum(gradients, dim=[1,2,4]) # reduce over screen height, width and channel
       # map to output variables
       grad_tf = torch.zeros_like(current_tf)
@@ -253,7 +282,10 @@ if __name__=='__main__':
           idx = derivative_tf_indices[0,R,C]
           if idx>=0:
             grad_tf[:,R,C] = gradients[:,idx]
-      return grad_tf
+      gradients_cpy = torch.sum(gradients_cpy, dim=4)  # reduce over channel
+      grad_ray_start = gradients_cpy[..., (4*res):(4*res + 3)]
+      grad_ray_dir = gradients_cpy[..., (4*res + 3):(4*res + 6)]
+      return grad_tf, grad_ray_start, grad_ray_dir
   rendererDerivTF = RendererDerivTF.apply
 
   class OptimModel(torch.nn.Module):
@@ -261,29 +293,49 @@ if __name__=='__main__':
       super().__init__()
       self.tf_transform = TransformTF()
       self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
-    def forward(self, current_tf):
+    def forward(self, current_tf, current_pitch, current_yaw, current_distance):
       # TODO: softplus for opacity, sigmoid for color
       transformed_tf = self.tf_transform(current_tf)
-      color = rendererDerivTF(transformed_tf)
+      viewport = pyrenderer.Camera.viewport_from_sphere(
+        camera_center, current_yaw, current_pitch, current_distance, camera_orientation)
+      ray_start, ray_dir = pyrenderer.Camera.generate_rays(
+        viewport, fov_radians, W, H)
+      color = rendererDerivTF(transformed_tf, ray_start, ray_dir)
       #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
       loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
-      return loss, transformed_tf, color
+      return loss, transformed_tf, viewport, color
   model = OptimModel()
 
   # run optimization
-  iterations = 400
+  iterations = 400  # 400
   reconstructed_color = []
   reconstructed_tf = []
+  reconstructed_viewport = []
   reconstructed_loss = []
   current_tf = tf.clone()
   current_tf.requires_grad_()
-  optimizer = torch.optim.Adam([current_tf], lr=0.2)
+  variables = [current_tf]
+  optimize_pitch = True
+  optimize_yaw = True
+  optimize_distance = False
+  if optimize_pitch:
+    current_pitch.requires_grad_()
+    variables.append(current_pitch)
+  if optimize_yaw:
+    current_yaw.requires_grad_()
+    variables.append(current_yaw)
+  if optimize_distance:
+    current_distance.requires_grad_()
+    variables.append(current_distance)
+  optimizer = torch.optim.Adam(variables, lr=0.2)
+  #optimizer = torch.optim.LBFGS(variables, lr=0.2)
   for iteration in range(iterations):
     optimizer.zero_grad()
-    loss, transformed_tf, color = model(current_tf)
+    loss, transformed_tf, current_viewport, color = model(current_tf, current_pitch, current_yaw, current_distance)
     reconstructed_color.append(color.detach().cpu().numpy()[0,:,:,0:3])
     reconstructed_loss.append(loss.item())
     reconstructed_tf.append(transformed_tf.detach().cpu().numpy()[0])
+    reconstructed_viewport.append(current_viewport.detach().cpu().numpy()[0])
     loss.backward()
     optimizer.step()
     print("Iteration % 4d, Loss: %7.5f"%(iteration, loss.item()))
