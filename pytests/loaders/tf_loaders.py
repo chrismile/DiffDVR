@@ -56,7 +56,7 @@ def linearrgb_to_srgb(val):
         return 1.055 * pow(val, 1.0 / 2.4) - 0.055
 
 
-def load_tf_from_xml(path, res, opacity_scale):
+def load_tf_from_xml(path, res, opacity_scale, write_pos=False):
     root = ET.parse(path).getroot()
 
     interpolation_colorspace = root.get('interpolation_colorspace')
@@ -100,7 +100,10 @@ def load_tf_from_xml(path, res, opacity_scale):
         while opacity_points[opacity_pt_idx]['position'] < curr_pos:
             opacity_pt_idx += 1
 
-        color_at_idx = [0.0, 0.0, 0.0, 0.0, curr_pos]  # r,g,b,a,pos
+        if write_pos:
+            color_at_idx = [0.0, 0.0, 0.0, 0.0, curr_pos]  # r,g,b,a,pos
+        else:
+            color_at_idx = [0.0, 0.0, 0.0, 0.0]  # r,g,b,a
 
         if color_points[color_pt_idx]['position'] == curr_pos:
             color_at_idx[0] = color_points[color_pt_idx]['r']

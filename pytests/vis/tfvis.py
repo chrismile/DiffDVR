@@ -87,3 +87,54 @@ def renderTfLinear(
   axes.spines['right'].set_visible(False)
   axes.spines['top'].set_visible(False)
   arrowed_spines(plt.gca(), labels=('d', 'tf'))
+
+def renderTfTexture(
+        tf : np.ndarray, # R*4
+        axes : plt.Axes,
+        use_min_density = False
+) -> Image:
+  axes.clear()
+  assert len(tf.shape)==2
+  assert tf.shape[1] == 4
+  opacityValues = tf[:,3]
+  opacityDensities = np.linspace(0.0, 1.0, tf.shape[0])
+  colorValues = tf[:,:3]
+  colorDensities = opacityDensities
+
+  # compute colors at the control points of the opacities
+  xmin, xmax, ymin, ymax = min(opacityDensities), max(opacityDensities), min(opacityValues), max(opacityValues)
+  #(xmin, xmax, ymin, ymax)
+  colorsAtOpacities = np.empty((1, 200, 3), dtype=float)
+  for i,d in enumerate(np.linspace(xmin, xmax, num=colorsAtOpacities.shape[1], endpoint=True)):
+    found = False
+    for j in range(len(colorDensities)-1):
+      d1 = colorDensities[j]
+      d2 = colorDensities[j+1]
+      if d1 <= d <= d2:
+        f = (d-d1) / (d2-d1)
+        rgb1 = colorValues[j,:]
+        rgb2 = colorValues[j+1,:]
+        rgb_mixed = lerp(f, rgb1, rgb2)
+        colorsAtOpacities[0,i,:] = rgb_mixed
+        found=True
+        break
+    #print("found:", found)
+  colorsAtOpacities = np.clip(colorsAtOpacities, 0, 1)
+  #print(colorsAtOpacities)
+  line, = axes.plot(opacityDensities, opacityValues, 'o-')
+  im = axes.imshow(colorsAtOpacities, aspect='auto', extent=[xmin, xmax, ymin, ymax],
+                        origin='lower', zorder=line.get_zorder())
+  xy = np.column_stack([opacityDensities, opacityValues])
+  xy = np.vstack([[xmin, ymin], xy, [xmax, ymin], [xmin, ymin]])
+  clip_path = Polygon(xy, facecolor='none', edgecolor='none', closed=True)
+  axes.add_patch(clip_path)
+  im.set_clip_path(clip_path)
+
+  #axes.set_ylim(0, axes.get_ylim()[1]*1.05)
+  #print(ymax)
+  axes.set_ylim(0, ymax*1.05)
+
+  # axes to arrows
+  axes.spines['right'].set_visible(False)
+  axes.spines['top'].set_visible(False)
+  arrowed_spines(plt.gca(), labels=('d', 'tf'))
