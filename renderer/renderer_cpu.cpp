@@ -15,80 +15,94 @@ renderer::RendererCpu& renderer::RendererCpu::Instance()
 	return INSTANCE;
 }
 
-#define CALL_KERNEL(vfm_static, cm_static, tf_static, blend_static, ...)	\
+#define CALL_KERNEL(vfm_static, cm_static, tf_static, blend_static, segmentation_static, ...)	\
 	do {	\
 	static constexpr kernel::VolumeFilterMode volumeFilterMode = vfm_static;	\
 	static constexpr kernel::CameraMode cameraMode = cm_static;	\
 	static constexpr kernel::TFMode tfMode = tf_static;	\
 	static constexpr kernel::BlendMode blendMode = blend_static;	\
+	static constexpr kernel::SegmentationMode segmentationMode = segmentation_static;	\
 	__VA_ARGS__ ();	\
 	} while(0)
 
 	//kernel::DvrKernelForwardHost	\
-	//	<vfm_static, cm_static, tf_static, blend_static> \
+	//	<vfm_static, cm_static, tf_static, blend_static, segmentationMode> \
 	//	(virtual_size, inputs, outputs)
 
-#define SWITCH_VOLUME_FILTER_MODE(vfm, cm_static, tf_static, blend_static, ...)	\
+#define SWITCH_VOLUME_FILTER_MODE(vfm, cm_static, tf_static, blend_static, segmentation_static, ...)	\
 	switch(vfm) {	\
 		case kernel::VolumeFilterMode::FilterNearest: \
-			CALL_KERNEL(kernel::VolumeFilterMode::FilterNearest, cm_static, tf_static, blend_static, __VA_ARGS__); \
+			CALL_KERNEL(kernel::VolumeFilterMode::FilterNearest, cm_static, tf_static, blend_static, segmentation_static, __VA_ARGS__); \
 			break;	\
 		case kernel::VolumeFilterMode::FilterTrilinear: \
-			CALL_KERNEL(kernel::VolumeFilterMode::FilterTrilinear, cm_static, tf_static, blend_static, __VA_ARGS__);	\
+			CALL_KERNEL(kernel::VolumeFilterMode::FilterTrilinear, cm_static, tf_static, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 	}
 //TODO: add tricubic someday
 
-#define SWITCH_CAMERA_MODE(vfm, cm, tf_static, blend_static, ...) \
+#define SWITCH_CAMERA_MODE(vfm, cm, tf_static, blend_static, segmentation_static, ...) \
 	switch (cm) {	\
 		case kernel::CameraMode::CameraRayStartDir:	\
-			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraRayStartDir, tf_static, blend_static, __VA_ARGS__);	\
+			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraRayStartDir, tf_static, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::CameraMode::CameraInverseViewMatrix:	\
-			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraInverseViewMatrix, tf_static, blend_static, __VA_ARGS__);	\
+			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraInverseViewMatrix, tf_static, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::CameraMode::CameraReferenceFrame:	\
-			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraReferenceFrame, tf_static, blend_static, __VA_ARGS__);	\
+			SWITCH_VOLUME_FILTER_MODE(vfm, kernel::CameraMode::CameraReferenceFrame, tf_static, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 	}
 
-#define SWITCH_TF_MODE(vfm, cm, tf, blend_static, ...) \
+#define SWITCH_TF_MODE(vfm, cm, tf, blend_static, segmentation_static, ...) \
 	switch (tf) {	\
 		case kernel::TFMode::TFIdentity: \
-			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFIdentity, blend_static, __VA_ARGS__);	\
+			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFIdentity, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::TFMode::TFTexture: \
-			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFTexture, blend_static, __VA_ARGS__);	\
+			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFTexture, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::TFMode::TFLinear: \
-			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFLinear, blend_static, __VA_ARGS__);	\
+			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFLinear, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::TFMode::TFGaussian: \
-			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFGaussian, blend_static, __VA_ARGS__);	\
+			SWITCH_CAMERA_MODE(vfm, cm, kernel::TFMode::TFGaussian, blend_static, segmentation_static, __VA_ARGS__);	\
 			break;	\
 	}
 
-#define SWITCH_BLEND_MODE(vfm, cm, tf, blend, ...)	\
+#define SWITCH_BLEND_MODE(vfm, cm, tf, blend, segmentation_static, ...)	\
 	switch (blend) {	\
 		case kernel::BlendMode::BlendBeerLambert:	\
-			SWITCH_TF_MODE(vfm, cm, tf, kernel::BlendMode::BlendBeerLambert, __VA_ARGS__);	\
+			SWITCH_TF_MODE(vfm, cm, tf, kernel::BlendMode::BlendBeerLambert, segmentation_static, __VA_ARGS__);	\
 			break;	\
 		case kernel::BlendMode::BlendAlpha:	\
-			SWITCH_TF_MODE(vfm, cm, tf, kernel::BlendMode::BlendAlpha, __VA_ARGS__);	\
+			SWITCH_TF_MODE(vfm, cm, tf, kernel::BlendMode::BlendAlpha, segmentation_static, __VA_ARGS__);	\
+			break;	\
+	}
+
+#define SWITCH_SEGMENTATION_MODE(vfm, cm, tf, blend, segmentation, ...)	\
+	switch (segmentation) {	\
+		case kernel::SegmentationMode::SegmentationOff:	\
+			SWITCH_BLEND_MODE(vfm, cm, tf, blend, kernel::SegmentationMode::SegmentationOff, __VA_ARGS__);	\
+			break;	\
+		case kernel::SegmentationMode::SegmentationBinary:	\
+			SWITCH_BLEND_MODE(vfm, cm, tf, blend, kernel::SegmentationMode::SegmentationBinary, __VA_ARGS__);	\
+			break;	\
+		case kernel::SegmentationMode::SegmentationMultiClass:	\
+			SWITCH_BLEND_MODE(vfm, cm, tf, blend, kernel::SegmentationMode::SegmentationMultiClass, __VA_ARGS__);	\
 			break;	\
 	}
 
 void renderer::RendererCpu::renderForward(const kernel::RendererInputs& inputs, kernel::RendererOutputs& outputs,
 	int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode,
-	kernel::TFMode tfMode, kernel::BlendMode blendMode)
+	kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode)
 {
 #if RENDERER_BUILD_CPU_KERNELS==1
 	dim3 virtual_size{ static_cast<unsigned int>(W), static_cast<unsigned int>(H), static_cast<unsigned int>(B) };
-	SWITCH_BLEND_MODE(volumeFilterMode, cameraMode, tfMode, blendMode, 
+    SWITCH_SEGMENTATION_MODE(volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 		[virtual_size, inputs, outputs]()
 	{
 		kernel::DvrKernelForwardHost
-			<volumeFilterMode, cameraMode, tfMode, blendMode>
+			<volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode>
 			(virtual_size, inputs, outputs);
 	});
 #else
@@ -132,7 +146,7 @@ void renderer::RendererCpu::renderForwardGradients(
 	kernel::RendererOutputs& outputs, kernel::ForwardDifferencesOutput& gradients, 
 	int B, int W, int H, 
 	kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode, 
-	kernel::TFMode tfMode, kernel::BlendMode blendMode, 
+	kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode,
 	int numDerivatives, bool hasStepsizeDerivative,
 	bool hasCameraDerivative, bool hasTFDerivative)
 {
@@ -140,11 +154,11 @@ void renderer::RendererCpu::renderForwardGradients(
 	dim3 virtual_size{ static_cast<unsigned int>(W), static_cast<unsigned int>(H), static_cast<unsigned int>(B) };
 
 	SWITCH_DERIVATIVES(numDerivatives, hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative,
-		SWITCH_BLEND_MODE(volumeFilterMode, cameraMode, tfMode, blendMode,
+		SWITCH_SEGMENTATION_MODE(volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 		[virtual_size, inputs, settings, outputs, gradients]()
 	{
 		kernel::DvrKernelForwardGradientsHost
-			<volumeFilterMode, cameraMode, tfMode, blendMode,
+			<volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 			numDerivatives, hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative>
 			(virtual_size, inputs, settings, outputs, gradients);
 	}));
@@ -267,46 +281,69 @@ void renderer::RendererCpu::compareToImage_WithReduce(const kernel::Tensor4Read&
 #endif
 }
 
-#define CASE_ADJOINT(sd, cd, tfd, vd, ...)	\
+#define CASE_ADJOINT(sd, cd, tfd, vd, svd, ...)	\
 	{	\
 	static constexpr int hasStepsizeDerivative = sd;	\
 	static constexpr int hasCameraDerivative = cd;		\
 	static constexpr int hasTFDerivative = tfd;			\
-	static constexpr int hasVolumeDerivative = vd;		\
+	static constexpr int hasVolumeDerivative = vd;      \
+    static constexpr int hasSegmentationVolumeDerivative = svd; \
 	__VA_ARGS__;	\
 	}
-#define SWITCH_ADJOINT(sd, cd, tfd, vd, ...)	\
+#define SWITCH_ADJOINT(sd, cd, tfd, vd, svd, ...)	\
 	do {	\
-	     if ( (sd) &&  (cd) &&  (tfd) &&  (vd)) CASE_ADJOINT(true , true , true , true , __VA_ARGS__)		\
-	else if (!(sd) &&  (cd) &&  (tfd) &&  (vd)) CASE_ADJOINT(false, true , true , true , __VA_ARGS__)		\
-	else if ( (sd) && !(cd) &&  (tfd) &&  (vd)) CASE_ADJOINT(true , false, true , true , __VA_ARGS__)		\
-	else if (!(sd) && !(cd) &&  (tfd) &&  (vd)) CASE_ADJOINT(false, false, true , true , __VA_ARGS__)		\
-	else if ( (sd) &&  (cd) && !(tfd) &&  (vd)) CASE_ADJOINT(true , true , false, true , __VA_ARGS__)		\
-	else if (!(sd) &&  (cd) && !(tfd) &&  (vd)) CASE_ADJOINT(false, true , false, true , __VA_ARGS__)		\
-	else if ( (sd) && !(cd) && !(tfd) &&  (vd)) CASE_ADJOINT(true , false, false, true , __VA_ARGS__)		\
-	else if (!(sd) && !(cd) && !(tfd) &&  (vd)) CASE_ADJOINT(false, false, false, true , __VA_ARGS__)		\
-	else if ( (sd) &&  (cd) &&  (tfd) && !(vd)) CASE_ADJOINT(true , true , true , false, __VA_ARGS__)		\
-	else if (!(sd) &&  (cd) &&  (tfd) && !(vd)) CASE_ADJOINT(false, true , true , false, __VA_ARGS__)		\
-	else if ( (sd) && !(cd) &&  (tfd) && !(vd)) CASE_ADJOINT(true , false, true , false, __VA_ARGS__)		\
-	else if (!(sd) && !(cd) &&  (tfd) && !(vd)) CASE_ADJOINT(false, false, true , false, __VA_ARGS__)		\
-	else if ( (sd) &&  (cd) && !(tfd) && !(vd)) CASE_ADJOINT(true , true , false, false, __VA_ARGS__)		\
-	else if (!(sd) &&  (cd) && !(tfd) && !(vd)) CASE_ADJOINT(false, true , false, false, __VA_ARGS__)		\
-	else if ( (sd) && !(cd) && !(tfd) && !(vd)) CASE_ADJOINT(true , false, false, false, __VA_ARGS__)		\
-	else if (!(sd) && !(cd) && !(tfd) && !(vd)) {throw std::runtime_error("At least one adjoint variable required. This should be already caught in renderer.cpp");}		\
+	     if ( (sd) &&  (cd) &&  (tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(true , true , true , true , true , __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) &&  (tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(false, true , true , true , true , __VA_ARGS__)		\
+	else if ( (sd) && !(cd) &&  (tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(true , false, true , true , true , __VA_ARGS__)		\
+	else if (!(sd) && !(cd) &&  (tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(false, false, true , true , true , __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) && !(tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(true , true , false, true , true , __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) && !(tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(false, true , false, true , true , __VA_ARGS__)		\
+	else if ( (sd) && !(cd) && !(tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(true , false, false, true , true , __VA_ARGS__)		\
+	else if (!(sd) && !(cd) && !(tfd) &&  (vd) &&  (svd)) CASE_ADJOINT(false, false, false, true , true , __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) &&  (tfd) && !(vd) &&  (svd)) CASE_ADJOINT(true , true , true , false, true , __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) &&  (tfd) && !(vd) &&  (svd)) CASE_ADJOINT(false, true , true , false, true , __VA_ARGS__)		\
+	else if ( (sd) && !(cd) &&  (tfd) && !(vd) &&  (svd)) CASE_ADJOINT(true , false, true , false, true , __VA_ARGS__)		\
+	else if (!(sd) && !(cd) &&  (tfd) && !(vd) &&  (svd)) CASE_ADJOINT(false, false, true , false, true , __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) && !(tfd) && !(vd) &&  (svd)) CASE_ADJOINT(true , true , false, false, true , __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) && !(tfd) && !(vd) &&  (svd)) CASE_ADJOINT(false, true , false, false, true , __VA_ARGS__)		\
+	else if ( (sd) && !(cd) && !(tfd) && !(vd) &&  (svd)) CASE_ADJOINT(true , false, false, false, true , __VA_ARGS__)		\
+	else if (!(sd) && !(cd) && !(tfd) && !(vd) &&  (svd)) CASE_ADJOINT(false, false, false, false, true , __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) &&  (tfd) &&  (vd) && !(svd)) CASE_ADJOINT(true , true , true , true , false, __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) &&  (tfd) &&  (vd) && !(svd)) CASE_ADJOINT(false, true , true , true , false, __VA_ARGS__)		\
+	else if ( (sd) && !(cd) &&  (tfd) &&  (vd) && !(svd)) CASE_ADJOINT(true , false, true , true , false, __VA_ARGS__)		\
+	else if (!(sd) && !(cd) &&  (tfd) &&  (vd) && !(svd)) CASE_ADJOINT(false, false, true , true , false, __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) && !(tfd) &&  (vd) && !(svd)) CASE_ADJOINT(true , true , false, true , false, __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) && !(tfd) &&  (vd) && !(svd)) CASE_ADJOINT(false, true , false, true , false, __VA_ARGS__)		\
+	else if ( (sd) && !(cd) && !(tfd) &&  (vd) && !(svd)) CASE_ADJOINT(true , false, false, true , false, __VA_ARGS__)		\
+	else if (!(sd) && !(cd) && !(tfd) &&  (vd) && !(svd)) CASE_ADJOINT(false, false, false, true , false, __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) &&  (tfd) && !(vd) && !(svd)) CASE_ADJOINT(true , true , true , false, false, __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) &&  (tfd) && !(vd) && !(svd)) CASE_ADJOINT(false, true , true , false, false, __VA_ARGS__)		\
+	else if ( (sd) && !(cd) &&  (tfd) && !(vd) && !(svd)) CASE_ADJOINT(true , false, true , false, false, __VA_ARGS__)		\
+	else if (!(sd) && !(cd) &&  (tfd) && !(vd) && !(svd)) CASE_ADJOINT(false, false, true , false, false, __VA_ARGS__)		\
+	else if ( (sd) &&  (cd) && !(tfd) && !(vd) && !(svd)) CASE_ADJOINT(true , true , false, false, false, __VA_ARGS__)		\
+	else if (!(sd) &&  (cd) && !(tfd) && !(vd) && !(svd)) CASE_ADJOINT(false, true , false, false, false, __VA_ARGS__)		\
+	else if ( (sd) && !(cd) && !(tfd) && !(vd) && !(svd)) CASE_ADJOINT(true , false, false, false, false, __VA_ARGS__)		\
+	else if (!(sd) && !(cd) && !(tfd) && !(vd) && !(svd)) {throw std::runtime_error("At least one adjoint variable required. This should be already caught in renderer.cpp");}		\
 	} while(0)
 
-void renderer::RendererCpu::renderAdjoint(const kernel::RendererInputs& inputs, const kernel::RendererOutputsAsInput& outputsFromForward, const kernel::AdjointColor_t& adj_color, kernel::AdjointOutputs& adj_outputs, int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative, bool hasVolumeDerivative)
+void renderer::RendererCpu::renderAdjoint(
+        const kernel::RendererInputs& inputs, const kernel::RendererOutputsAsInput& outputsFromForward,
+        const kernel::AdjointColor_t& adj_color, kernel::AdjointOutputs& adj_outputs, int B, int W, int H,
+        kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode, kernel::TFMode tfMode,
+        kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode,
+        bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative, bool hasVolumeDerivative,
+        bool hasSegmentationVolumeDerivative)
 {
 #if RENDERER_BUILD_CPU_KERNELS==1
 	dim3 virtual_size{ static_cast<unsigned int>(W), static_cast<unsigned int>(H), static_cast<unsigned int>(B) };
 	
-	SWITCH_ADJOINT(hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative,
-		SWITCH_BLEND_MODE(volumeFilterMode, cameraMode, tfMode, blendMode,
+	SWITCH_ADJOINT(hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative, hasSegmentationVolumeDerivative,
+		SWITCH_SEGMENTATION_MODE(volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 		[virtual_size, inputs, outputsFromForward, adj_color, adj_outputs]()
 	{
 		kernel::DvrKernelAdjointHost
-			<volumeFilterMode, cameraMode, tfMode, blendMode,
-			hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative>
+			<volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
+			hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative, hasSegmentationVolumeDerivative>
 			(virtual_size, inputs, outputsFromForward, adj_color, adj_outputs);
 	}));
 #else

@@ -24,6 +24,9 @@ struct RendererInputsHost
 
 	kernel::VolumeFilterMode volumeFilterMode;
 	torch::Tensor volume; //B*X*Y*Z
+    torch::Tensor volumeGrad; //B*X*Y*Z, only for 2D transfer functions
+    torch::Tensor segmentationVolume; //B*C*X*Y*Z
+    kernel::SegmentationMode segmentationMode;
 
 	std::variant<torch::Tensor, real3> boxMin; // (B)*3
 	std::variant<torch::Tensor, real3> boxSize;// (B)*3
@@ -58,6 +61,7 @@ struct RendererInputsHost
 
 	kernel::TFMode tfMode;
 	torch::Tensor tf; //(B)*R*C
+    int tfResX = 0; // For non-square 2D textures. tfResX = sqrt(tf.size(1)) if not set.
 
 	kernel::BlendMode blendMode;
 	real_t blendingEarlyOut = real_t(1) - real_t(1e-5);
@@ -108,6 +112,9 @@ struct AdjointOutputsHost
 	// delay final accumulation until ray finished tracing. Might be faster...
 	bool tfDelayedAcummulation = false;
 	torch::Tensor adj_tf; // (B)*R*C
+
+    bool hasSegmentationVolumeDerivative = false;
+    torch::Tensor adj_segmentationVolume; // (B)*C*X*Y*Z
 };
 
 class Renderer

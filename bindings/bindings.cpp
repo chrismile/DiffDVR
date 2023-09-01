@@ -222,7 +222,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 		.value("ReferenceFrame", kernel::CameraMode::CameraReferenceFrame);
 	py::enum_<kernel::TFMode>(m, "TFMode")
 		.value("Identity", kernel::TFMode::TFIdentity)
-		.value("Texture", kernel::TFMode::TFTexture)
+        .value("Texture", kernel::TFMode::TFTexture)
+        .value("Texture2D", kernel::TFMode::TFTexture2D)
 		.value("Linear", kernel::TFMode::TFLinear)
 		.value("Gaussian", kernel::TFMode::TFGaussian)
 		.value("GaussianLog", kernel::TFMode::TFGaussianLog)
@@ -268,26 +269,30 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 			return std::shared_ptr<Volume>(Volume::createImplicitDataset(resolution, name, args));
 		})
 		.def_static("from_numpy", [](py::buffer b)
-			{
-				const py::buffer_info info = b.request();
+		{
+			const py::buffer_info info = b.request();
 
-				//sanity checks
-				if (info.format != py::format_descriptor<real_t>::format())
-					throw std::runtime_error("Incompatible format: expected a real array!");
+			//sanity checks
+			if (info.format != py::format_descriptor<real_t>::format())
+				throw std::runtime_error("Incompatible format: expected a real array!");
 
-				if (info.ndim != 3)
-					throw std::runtime_error("Incompatible buffer dimension, expected 3!");
+			if (info.ndim != 3)
+				throw std::runtime_error("Incompatible buffer dimension, expected 3!");
 
-				ssize_t sizes[] = { info.shape[0], info.shape[1], info.shape[2] };
-				ssize_t strides[] = {
-					info.strides[0] / sizeof(real_t),
-					info.strides[1] / sizeof(real_t),
-					info.strides[2] / sizeof(real_t) };
-				return std::shared_ptr<Volume>(Volume::createFromBuffer(
-					static_cast<const real_t*>(info.ptr),
-					sizes, strides
-				));
-			}, py::doc("Create a volume from a 3D numpy array of type 'real'"))
+			ssize_t sizes[] = { info.shape[0], info.shape[1], info.shape[2] };
+			ssize_t strides[] = {
+				info.strides[0] / sizeof(real_t),
+				info.strides[1] / sizeof(real_t),
+				info.strides[2] / sizeof(real_t) };
+			return std::shared_ptr<Volume>(Volume::createFromBuffer(
+				static_cast<const real_t*>(info.ptr),
+				sizes, strides
+			));
+		}, py::doc("Create a volume from a 3D numpy array of type 'real'"))
+        .def_static("create_grad_volume_cpu", [](std::shared_ptr<Volume> densityVolume)
+        {
+            return std::shared_ptr<Volume>(Volume::createGradientVolume(densityVolume.get()));
+        }, py::doc("Create a gradient volume from another volume object"))
 		.def("copy_to_gpu", [](std::shared_ptr<Volume> v)
 		{
 			for (int i = 0; v->getLevel(i); ++i)
@@ -391,6 +396,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 				py::doc("the volume tensor of shape B*X*Y*Z"))
 			.def_readwrite("volume_filter_mode", &RendererInputsHost::volumeFilterMode,
 				py::doc("the filter mode used to sample the density volume"))
+            .def_readwrite("volume_grad", &RendererInputsHost::volumeGrad,
+                py::doc("the gradient volume tensor of shape B*X*Y*Z (only when using 2D transfer functions)"))
 			.def_readwrite("box_min", &RendererInputsHost::boxMin,
 				py::doc("The minimal position of the bounding box.\nSpecified either as single float3 or float tensor of shape B*3."))
 			.def_readwrite("box_size", &RendererInputsHost::boxSize,
@@ -410,6 +417,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 					" - if self.tf_mode==Identity, R=1, C=2 (opacity scaling, color scaling)\n"
 					" - if self.tf_mode==Texture, C=4 (r,g,b,absorption) and R is the resolution of the texture\n"
 					" - if self.tf_mode==Linear, C=5 (r,g,b,absorption,position) and R is the number of control points of the piecewise linear function."))
+            .def_readwrite("tf_res_x", &RendererInputsHost::tfResX,
+                py::doc("The resolution of the transfer function in x direction (only when using 2D transfer functions)"))
 			.def_readwrite("blend_mode", &RendererInputsHost::blendMode,
 				py::doc("The blend mode to use"))
 			.def_readwrite("blending_early_out", &RendererInputsHost::blendingEarlyOut,

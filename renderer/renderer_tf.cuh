@@ -288,7 +288,226 @@ namespace kernel
 		}
 	};
 
-	template<>
+    template<>
+    struct TransferFunctionEval<TFTexture2D>
+    {
+        __host__ __device__ __inline__ real4 eval(
+                const Tensor3Read& tf, int tfRes, int batch, real_t density, real_t densityGrad) const
+        {
+            const int Ri = tfRes;
+
+            //texture linear interpolation
+            const real_t dx = density * Ri - real_t(0.5);
+            const int dxi = int(floorf(dx));
+            const real_t dxf = dx - dxi;
+            const real_t dy = densityGrad * Ri - real_t(0.5);
+            const int dyi = int(floorf(dy));
+            const real_t dyf = dy - dyi;
+
+            int lx = clamp(dxi, 0, Ri - 1);
+            int ux = clamp(dxi+1, 0, Ri - 1);
+            int ly = clamp(dyi, 0, Ri - 1);
+            int uy = clamp(dyi+1, 0, Ri - 1);
+            const real4 val00 = fetchReal4(tf, batch, ly * Ri + lx);
+            const real4 val01 = fetchReal4(tf, batch, ly * Ri + ux);
+            const real4 val10 = fetchReal4(tf, batch, uy * Ri + lx);
+            const real4 val11 = fetchReal4(tf, batch, uy * Ri + ux);
+            const real4 val0 = lerp(val00, val01, dxf);
+            const real4 val1 = lerp(val10, val11, dxf);
+            return lerp(val0, val1, dyf);
+        }
+
+        __host__ __device__ __inline__ real4 eval(
+                const Tensor3Read& tf, int batch, real_t density) const
+        {
+            return eval(tf, tf.size(1), batch, density, 0);
+        }
+
+        template<bool HasTFDerivative, bool DelayedAccumulation>
+        __host__ __device__ __inline__ void adjoint(
+                const Tensor3Read& tf, int tfRes, int batch, real_t density, real_t densityGrad,
+                const real4& adj_color, real_t& adj_density,
+                BTensor3RW& adj_tf, real_t* sharedData) const
+        {
+            const int Ri = tfRes;
+
+            //texture linear interpolation
+            const real_t dx = density * Ri - real_t(0.5);
+            const int dxi = int(floorf(dx));
+            const real_t dxf = dx - dxi;
+            const real_t dy = densityGrad * Ri - real_t(0.5);
+            const int dyi = int(floorf(dy));
+            const real_t dyf = dy - dyi;
+
+            int lx = clamp(dxi, 0, Ri - 1);
+            int ux = clamp(dxi+1, 0, Ri - 1);
+            int ly = clamp(dyi, 0, Ri - 1);
+            int uy = clamp(dyi+1, 0, Ri - 1);
+            int idx00 = ly * Ri + lx;
+            int idx01 = ly * Ri + ux;
+            int idx10 = uy * Ri + lx;
+            int idx11 = uy * Ri + ux;
+
+            if constexpr (HasTFDerivative)
+            {
+                const real4 adj_val00 = adj_color * ((1 - dyf) * (1 - dxf));
+                const real4 adj_val01 = adj_color * ((1 - dyf) * dxf);
+                const real4 adj_val10 = adj_color * (dyf * (1 - dxf));
+                const real4 adj_val11 = adj_color * (dyf * dxf);
+
+                if constexpr (DelayedAccumulation) {
+                    sharedData[4 * idx00 + 0] += adj_val00.x;
+                    sharedData[4 * idx00 + 1] += adj_val00.y;
+                    sharedData[4 * idx00 + 2] += adj_val00.z;
+                    sharedData[4 * idx00 + 3] += adj_val00.w;
+
+                    sharedData[4 * idx01 + 0] += adj_val01.x;
+                    sharedData[4 * idx01 + 1] += adj_val01.y;
+                    sharedData[4 * idx01 + 2] += adj_val01.z;
+                    sharedData[4 * idx01 + 3] += adj_val01.w;
+
+                    sharedData[4 * idx10 + 0] += adj_val10.x;
+                    sharedData[4 * idx10 + 1] += adj_val10.y;
+                    sharedData[4 * idx10 + 2] += adj_val10.z;
+                    sharedData[4 * idx10 + 3] += adj_val10.w;
+
+                    sharedData[4 * idx11 + 0] += adj_val11.x;
+                    sharedData[4 * idx11 + 1] += adj_val11.y;
+                    sharedData[4 * idx11 + 2] += adj_val11.z;
+                    sharedData[4 * idx11 + 3] += adj_val11.w;
+                }
+                else {
+                    kernel::atomicAdd(&adj_tf[batch][idx00][0], adj_val00.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx00][1], adj_val00.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx00][2], adj_val00.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx00][3], adj_val00.w);
+
+                    kernel::atomicAdd(&adj_tf[batch][idx01][0], adj_val01.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx01][1], adj_val01.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx01][2], adj_val01.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx01][3], adj_val01.w);
+
+                    kernel::atomicAdd(&adj_tf[batch][idx10][0], adj_val10.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx10][1], adj_val10.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx10][2], adj_val10.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx10][3], adj_val10.w);
+
+                    kernel::atomicAdd(&adj_tf[batch][idx11][0], adj_val11.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx11][1], adj_val11.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx11][2], adj_val11.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx11][3], adj_val11.w);
+                }
+            }
+
+            // Density gradients not supported for 2D textures.
+            adj_density = 0.0f;
+        }
+
+        template<bool HasTFDerivative, bool DelayedAccumulation>
+        __host__ __device__ __inline__ void adjoint(
+                const Tensor3Read& tf, int batch, real_t density,
+                const real4& adj_color, real_t& adj_density,
+                BTensor3RW& adj_tf, real_t* sharedData) const
+        {
+            return adjoint<HasTFDerivative, DelayedAccumulation>(
+                    tf, tf.size(1), batch, density, 0, adj_color, adj_density, adj_tf, sharedData);
+        }
+
+        __host__ __device__ __inline__ void adjointAccumulate(
+                int batch, BTensor3RW& adj_tf, real_t* sharedData) const
+        {
+            const int R = adj_tf.size(1);
+            const int C = 4;
+#ifdef __CUDA_ARCH__
+            coalesced_group active = coalesced_threads();
+                const int tia = active.thread_rank();
+#endif
+            for (int r=0; r<R; ++r) for (int c=0; c<C; ++c)
+                {
+                    real_t val = sharedData[4 * r + c];
+#ifdef __CUDA_ARCH__
+                    real_t reduction = reduce(active, val, plus<real_t>());
+                    active.sync();
+                    if (tia==0)
+                    { //leader accumulates
+                        kernel::atomicAdd(&adj_tf[batch][r][c], reduction);
+                    }
+#else
+                    //fallback accumulation
+                    kernel::atomicAdd(&adj_tf[batch][r][c], val);
+#endif
+                }
+        }
+        __host__ __device__ __inline__ void adjointInit(
+                BTensor3RW& adj_tf, real_t* sharedData) const
+        {
+            const int R = adj_tf.size(1);
+            const int C = 4;
+            for (int r = 0; r < R; ++r) for (int c = 0; c < C; ++c)
+                    sharedData[r * C + c] = 0;
+        }
+
+        template<int D, typename density_t>
+        __host__ __device__ __inline__ cudAD::fvar<real4, D> evalForwardGradients(
+                const Tensor3Read& tf, int tfRes, int batch, density_t density, density_t densityGrad,
+                const ITensor3Read& d_tf,
+                integral_constant<bool, false> /*hasTFDerivative*/) const
+        {
+            using namespace cudAD;
+            const int Ri = tfRes;
+
+            //texture linear interpolation
+            const auto dx = density * Ri - real_t(0.5);
+            const int dxi = int(floorf(static_cast<real_t>(dx)));
+            const auto dxf = dx - dxi;
+            const auto dy = densityGrad * Ri - real_t(0.5);
+            const int dyi = int(floorf(static_cast<real_t>(dy)));
+            const auto dyf = dy - dyi;
+
+            int lx = clamp(dxi, 0, Ri - 1);
+            int ux = clamp(dxi+1, 0, Ri - 1);
+            int ly = clamp(dyi, 0, Ri - 1);
+            int uy = clamp(dyi+1, 0, Ri - 1);
+            const real4 val00 = fetchReal4(tf, batch, ly * Ri + lx);
+            const real4 val01 = fetchReal4(tf, batch, ly * Ri + ux);
+            const real4 val10 = fetchReal4(tf, batch, uy * Ri + lx);
+            const real4 val11 = fetchReal4(tf, batch, uy * Ri + ux);
+            const auto val0 = lerp(val00, val01, broadcast4(dxf));
+            const auto val1 = lerp(val10, val11, broadcast4(dxf));
+            return lerp(val0, val1, broadcast4(dyf));
+        }
+        template<int D, typename density_t>
+        __host__ __device__ __inline__ cudAD::fvar<real4, D> evalForwardGradients(
+                const Tensor3Read& tf, int tfRes, int batch, density_t density, density_t densityGrad,
+                const ITensor3Read& d_tf,
+                integral_constant<bool, true> /*hasTFDerivative*/) const
+        {
+            using namespace cudAD;
+            const int Ri = tfRes;
+
+            //texture linear interpolation
+            const auto dx = density * Ri - real_t(0.5);
+            const int dxi = int(floorf(static_cast<real_t>(dx)));
+            const auto dxf = dx - dxi;
+            const auto dy = densityGrad * Ri - real_t(0.5);
+            const int dyi = int(floorf(static_cast<real_t>(dy)));
+            const auto dyf = dy - dyi;
+
+            int lx = clamp(dxi, 0, Ri - 1);
+            int ux = clamp(dxi+1, 0, Ri - 1);
+            int ly = clamp(dyi, 0, Ri - 1);
+            int uy = clamp(dyi+1, 0, Ri - 1);
+            const fvar<real4, D> val00 = make_real4in<D>(fetchReal4(tf, batch, ly * Ri + lx), fetchInt4(d_tf, batch, ly * Ri + lx));
+            const fvar<real4, D> val01 = make_real4in<D>(fetchReal4(tf, batch, ly * Ri + ux), fetchInt4(d_tf, batch, ly * Ri + ux));
+            const fvar<real4, D> val10 = make_real4in<D>(fetchReal4(tf, batch, uy * Ri + lx), fetchInt4(d_tf, batch, uy * Ri + lx));
+            const fvar<real4, D> val11 = make_real4in<D>(fetchReal4(tf, batch, uy * Ri + ux), fetchInt4(d_tf, batch, uy * Ri + ux));
+            const auto val0 = lerp(val00, val01, broadcast4(dxf));
+            const auto val1 = lerp(val10, val11, broadcast4(dxf));
+            return lerp(val0, val1, broadcast4(dyf));
+        }
+    };
+
+    template<>
 	struct TransferFunctionEval<TFLinear>
 	{
 		__host__ __device__ __inline__ real4 eval(
@@ -869,6 +1088,9 @@ namespace kernel
 		case kernel::TFMode::TFTexture:	\
 			CALL_KERNEL_TF(kernel::TFMode::TFTexture, __VA_ARGS__);	\
 			break;	\
+		case kernel::TFMode::TFTexture2D:	\
+			CALL_KERNEL_TF(kernel::TFMode::TFTexture2D, __VA_ARGS__);	\
+			break;	\
 		case kernel::TFMode::TFLinear:	\
 			CALL_KERNEL_TF(kernel::TFMode::TFLinear, __VA_ARGS__);	\
 			break;	\
@@ -885,6 +1107,9 @@ namespace kernel
 			break;	\
 		case kernel::TFMode::TFTexture:	\
 			CALL_KERNEL_TF(kernel::TFMode::TFTexture, __VA_ARGS__);	\
+			break;	\
+		case kernel::TFMode::TFTexture2D:	\
+			CALL_KERNEL_TF(kernel::TFMode::TFTexture2D, __VA_ARGS__);	\
 			break;	\
 		case kernel::TFMode::TFLinear:	\
 			CALL_KERNEL_TF(kernel::TFMode::TFLinear, __VA_ARGS__);	\

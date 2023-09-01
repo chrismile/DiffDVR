@@ -15,7 +15,8 @@ struct RendererCpu
 		kernel::VolumeFilterMode volumeFilterMode,
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
-		kernel::BlendMode blendMode);
+		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode);
 
 	void renderForwardGradients(
 		const kernel::RendererInputs& inputs,
@@ -26,7 +27,8 @@ struct RendererCpu
 		kernel::VolumeFilterMode volumeFilterMode,
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
-		kernel::BlendMode blendMode,
+        kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		int numDerivatives,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
@@ -65,10 +67,12 @@ struct RendererCpu
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
 		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
 		bool hasTFDerivative,
-		bool hasVolumeDerivative);
+		bool hasVolumeDerivative,
+        bool hasSegmentationVolumeDerivative);
 };
 
 END_RENDERER_NAMESPACE

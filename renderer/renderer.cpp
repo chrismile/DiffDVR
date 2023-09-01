@@ -2,6 +2,7 @@
 
 #include <ATen/cuda/CUDAContext.h>
 
+#include "math_cpu.hpp"
 #include "renderer_cpu.h"
 #include "renderer_cuda.h"
 #include "pytorch_utils.h"
@@ -83,9 +84,41 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 		B = 1;
 		X = Y = Z = 0;
 	}
-	
 
-	torch::Tensor boxMin, boxSize;
+    const torch::Tensor& volumeGrad = inputsHost.volumeGrad;
+    if (inputsHost.tfMode == kernel::TFTexture2D) {
+        CHECK_DIM(volumeGrad, 4);
+        CHECK_CUDA(volumeGrad, cuda);
+        if (!ignoreVolume) {
+            CHECK_DTYPE(volumeGrad, real_dtype);
+            B = volume.size(0);
+            X = volume.size(1);
+            Y = volume.size(2);
+            Z = volume.size(3);
+            TORCH_CHECK(volume.size(0) == B && volume.size(1) == X && volume.size(2) == Y && volume.size(3) == Z,
+                "Volume and gradient volume must have the same size.");
+        }
+    }
+
+    const torch::Tensor& segmentationVolume = inputsHost.segmentationVolume;
+    auto segmentationMode = inputsHost.segmentationMode;
+    if (segmentationMode != kernel::SegmentationOff) {
+        CHECK_DIM(segmentationVolume, 5);
+        CHECK_CUDA(segmentationVolume, cuda);
+        if (!ignoreVolume) {
+            CHECK_DTYPE(volumeGrad, real_dtype);
+            B = volume.size(0);
+            int C = volume.size(1);
+            X = volume.size(2);
+            Y = volume.size(3);
+            Z = volume.size(4);
+            TORCH_CHECK(volume.size(0) == B && volume.size(1) == X && volume.size(2) == Y && volume.size(3) == Z,
+                        "Volume and gradient volume must have the same size.");
+        }
+    }
+
+
+    torch::Tensor boxMin, boxSize;
 	if (inputsHost.boxMin.index() == 0)
 	{
 		boxMin = std::get<0>(inputsHost.boxMin);
@@ -223,15 +256,26 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 	CHECK_DIM(tf, 3);
 	CHECK_CUDA(tf, cuda);
 	B = CHECK_BATCH(tf, B);
+    int tfRes = tf.size(1);
 	switch (inputsHost.tfMode)
 	{
 	case kernel::TFIdentity:
 		CHECK_SIZE(tf, 1, 1);
 		CHECK_SIZE(tf, 2, 2);
 		break;
-	case kernel::TFTexture:
-		CHECK_SIZE(tf, 2, 4);
-		break;
+    case kernel::TFTexture:
+        CHECK_SIZE(tf, 2, 4);
+        break;
+    case kernel::TFTexture2D:
+        // Hack, as for now,
+        if (inputsHost.tfResX) {
+            TORCH_CHECK((tfRes % inputsHost.tfResX == 0), "2D TF size is not divisible by x size.");
+            tfRes = inputsHost.tfResX;
+        } else {
+            tfRes = int(uisqrt(uint32_t(tfRes)));
+        }
+        CHECK_SIZE(tf, 2, 4);
+        break;
 	case kernel::TFLinear:
 		CHECK_SIZE(tf, 2, 5);
 		TORCH_CHECK(tf.size(1) > 1, "tensor 'tf' must have at least two control points in TFLinear-mode");
@@ -246,10 +290,13 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 		throw std::runtime_error("unknown tf enum value");
 	}
 
-	return { {
+
+    return { {
 		make_int2(W, H),
 		accessor<kernel::Tensor4Read>(volume),
 		make_int3(X, Y, Z),
+        accessor<kernel::Tensor4Read>(inputsHost.tfMode == kernel::TFTexture2D ? volumeGrad : volume),
+        accessor<kernel::Tensor5Read>(inputsHost.tfMode == kernel::TFTexture2D ? segmentationVolume : volume),
 		accessor<kernel::Tensor2Read>(boxMin),
 		accessor<kernel::Tensor2Read>(boxSize),
 		accessor<kernel::Tensor4Read>(cameraRayStart),
@@ -258,6 +305,7 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 		cameraFovYRadians,
 		accessor<kernel::Tensor3Read>(stepSize),
 		accessor<kernel::Tensor3Read>(tf),
+		tfRes,
 		inputsHost.blendingEarlyOut
 	}, tensorsToKeepAlive };
 }
@@ -406,12 +454,12 @@ void renderer::Renderer::renderForward(const RendererInputsHost& inputsHost, Ren
 	{
 		RendererCuda::Instance().renderForward(inputsDevice, outputsDevice, B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode);
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode);
 	} else
 	{
 		RendererCpu::Instance().renderForward(inputsDevice, outputsDevice, B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode);
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode);
 	}
 	(void)tensorsToKeepAlive;
 }
@@ -481,7 +529,7 @@ void renderer::Renderer::renderForwardGradients(const RendererInputsHost& inputs
 			outputsDevice, gradientsDevice,
 			B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode,
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode,
 			differencesSettingsHost.D,
 			hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative);
 	}
@@ -492,7 +540,7 @@ void renderer::Renderer::renderForwardGradients(const RendererInputsHost& inputs
 			outputsDevice, gradientsDevice,
 			B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode,
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode,
 			differencesSettingsHost.D,
 			hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative);
 	}
@@ -708,6 +756,7 @@ void renderer::Renderer::renderAdjoint(const RendererInputsHost& inputsHost,
 	const bool hasStepSizeDerivative = adj_outputs.hasStepSizeDerivatives;
 	const bool hasCameraDerivative = adj_outputs.hasCameraDerivatives;
 	const bool hasTFDerivative = adj_outputs.hasTFDerivatives;
+    const bool hasSegmentationVolumeDerivative = adj_outputs.hasSegmentationVolumeDerivative;
 
 	if (!hasTFDerivative && !hasCameraDerivative && 
 		!hasStepSizeDerivative && !hasVolumeDerivative)
@@ -724,9 +773,10 @@ void renderer::Renderer::renderAdjoint(const RendererInputsHost& inputsHost,
 			adj_colorDevice, adj_outputsDevice,
 			B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode,
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode,
 			hasStepSizeDerivative, hasCameraDerivative, 
-			hasTFDerivative, adj_outputs.tfDelayedAcummulation, hasVolumeDerivative);
+			hasTFDerivative, adj_outputs.tfDelayedAcummulation, hasVolumeDerivative,
+            hasSegmentationVolumeDerivative);
 	}
 	else
 	{
@@ -735,8 +785,9 @@ void renderer::Renderer::renderAdjoint(const RendererInputsHost& inputsHost,
 			adj_colorDevice, adj_outputsDevice,
 			B, W, H,
 			inputsHost.volumeFilterMode, inputsHost.cameraMode,
-			inputsHost.tfMode, inputsHost.blendMode,
-			hasStepSizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative);
+			inputsHost.tfMode, inputsHost.blendMode, inputsHost.segmentationMode,
+			hasStepSizeDerivative, hasCameraDerivative, hasTFDerivative, hasVolumeDerivative,
+            hasSegmentationVolumeDerivative);
 	}
 	(void)tensorsToKeepAlive;
 }

@@ -18,12 +18,23 @@ namespace kernel {
 //=======================================================
 // forward simple (no gradients)
 //=======================================================
-	
+
+template<class T>
+T sigmoid(T x) {
+    return T(1) / (T(1) + expf(-x));
+}
+
+template<class T>
+T sigmoidGradFromValue(T sigmoidValue) {
+    return sigmoidValue * (T(1) - sigmoidValue);
+}
+
 template<
 	VolumeFilterMode volumeFilterMode,
 	CameraMode cameraMode,
 	TFMode tfMode,
-	BlendMode blendMode>
+	BlendMode blendMode,
+    SegmentationMode segmentationMode>
 __host__ __device__ void DvrKernelForwardImpl(
 	int x, int y, int b,
 	const RendererInputs& inputs, RendererOutputs& outputs)
@@ -70,11 +81,36 @@ __host__ __device__ void DvrKernelForwardImpl(
 			volumePos = (worldPos - boxMin); // networks expects it in [0,1], no dependency on the resolution
 		else
 			volumePos = (worldPos - boxMin) / voxelSize;
-		auto density = volumeInterpolation.fetch(
-			inputs.volume, inputs.volumeSize, b, volumePos);
+		auto density = volumeInterpolation.fetch(inputs.volume, inputs.volumeSize, b, volumePos);
 
-		//evaluate transfer function
-		real4 colorAbsorption = transferFunctionEval.eval(inputs.tf, b, density);
+        //evaluate transfer function
+        real4 colorAbsorption;
+        if constexpr (segmentationMode == SegmentationMode::SegmentationOff) {
+            if constexpr(tfMode != TFTexture2D) {
+                colorAbsorption = transferFunctionEval.eval(inputs.tf, b, density);
+            } else {
+                auto gradMag = volumeInterpolation.fetch(inputs.volumeGrad, inputs.volumeSize, b, volumePos);
+                colorAbsorption = transferFunctionEval.eval(inputs.tf, inputs.tfRes, b, density, gradMag);
+            }
+        } else if constexpr (segmentationMode == SegmentationMode::SegmentationBinary) {
+            // TODO, implement multiple TFs
+            auto seg = volumeInterpolation.fetch(inputs.segmentationVolume, inputs.volumeSize, b, volumePos);
+            auto S = sigmoid(seg);
+            real4 c0 = transferFunctionEval.eval(inputs.tf, b, density, 0);
+            real4 c1 = transferFunctionEval.eval(inputs.tf, b, density, 1);
+            colorAbsorption = lerp(c0, c1, S);
+        } else if constexpr (segmentationMode == SegmentationMode::SegmentationMultiClass) {
+            // TODO, implement multiple TFs
+            int C = inputs.segmentationVolume.size(1);
+            float softmaxSum = 0.0f;
+            for (int i = 0; i < C; i++) {
+                auto seg = volumeInterpolation.fetch(inputs.segmentationVolume, inputs.volumeSize, b, volumePos, i);
+                softmaxSum += expf(seg);
+                real4 ci = transferFunctionEval.eval(inputs.tf, b, density, i);
+                colorAbsorption += ci * expf(seg);
+            }
+            colorAbsorption /= softmaxSum;
+        }
 
 		//blend into accumulator
 		outputColor = Blending<blendMode>::blend(outputColor, colorAbsorption, stepsize);
@@ -93,13 +129,14 @@ template<
 	VolumeFilterMode volumeFilterMode,
 	CameraMode cameraMode,
 	TFMode tfMode,
-	BlendMode blendMode>
+	BlendMode blendMode,
+    SegmentationMode segmentationMode>
 __global__ void DvrKernelForwardDevice(dim3 virtual_size,
 	RendererInputs inputs, RendererOutputs outputs)
 {
 	KERNEL_3D_LOOP(x, y, b, virtual_size)
 	{
-		DvrKernelForwardImpl<volumeFilterMode, cameraMode, tfMode, blendMode>(
+		DvrKernelForwardImpl<volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode>(
 			x, y, b, inputs, outputs);
 	}
 	KERNEL_3D_LOOP_END
@@ -110,7 +147,8 @@ template<
 	VolumeFilterMode volumeFilterMode,
 	CameraMode cameraMode,
 	TFMode tfMode,
-	BlendMode blendMode>
+    BlendMode blendMode,
+    SegmentationMode segmentationMode>
 __host__ void DvrKernelForwardHost(dim3 virtual_size,
 	RendererInputs inputs, RendererOutputs outputs)
 {
@@ -121,7 +159,7 @@ __host__ void DvrKernelForwardHost(dim3 virtual_size,
 		int b = __i / (virtual_size.x * virtual_size.y);
 		int y = (__i - (b * virtual_size.x * virtual_size.y)) / virtual_size.x;
 		int x = __i - virtual_size.x * (y + virtual_size.y * b);
-		DvrKernelForwardImpl<volumeFilterMode, cameraMode, tfMode, blendMode>(
+		DvrKernelForwardImpl<volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode>(
 			x, y, b, inputs, outputs);
 	}
 }
@@ -163,6 +201,7 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	int D, //number of derivatives
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
@@ -221,12 +260,19 @@ __host__ __device__ void DvrKernelForwardGradientsImpl(
 		//fetch density
 		auto worldPos = rayStart + broadcast3(tcurrent) * rayDir;
 		auto volumePos = (worldPos - boxMin) / voxelSize;
-		auto density = volumeInterpolation.fetch(
-			inputs.volume, inputs.volumeSize, b, volumePos);
+		auto density = volumeInterpolation.fetch(inputs.volume, inputs.volumeSize, b, volumePos);
 
 		//evaluate transfer function
-		auto colorAbsorption = transferFunctionEval.template evalForwardGradients<D>(
-			inputs.tf, b, density, settings.d_tf, integral_constant<bool, HasTFDerivative>());
+        // TODO: Add support for segmentation forward pass
+        cudAD::fvar<real4, D> colorAbsorption;
+        if constexpr(tfMode != TFTexture2D) {
+            colorAbsorption = transferFunctionEval.template evalForwardGradients<D>(
+                    inputs.tf, b, density, settings.d_tf, integral_constant<bool, HasTFDerivative>());
+        } else {
+            auto gradMag = volumeInterpolation.fetch(inputs.volumeGrad, inputs.volumeSize, b, volumePos);
+            colorAbsorption = transferFunctionEval.template evalForwardGradients<D>(
+                    inputs.tf, inputs.tfRes, b, density, gradMag, settings.d_tf, integral_constant<bool, HasTFDerivative>());
+        }
 
 		//blend into accumulator
 		outputColor = Blending<blendMode>::blend(outputColor, colorAbsorption, stepsize);
@@ -260,6 +306,7 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	int D, //number of derivatives
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
@@ -271,7 +318,7 @@ __global__ void DvrKernelForwardGradientsDevice(dim3 virtual_size,
 	KERNEL_3D_LOOP(x, y, b, virtual_size)
 	{
 		DvrKernelForwardGradientsImpl<
-			volumeFilterMode, cameraMode, tfMode, blendMode,
+			volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 			D, HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative>(
 			x, y, b, inputs, settings, outputs, gradOutput);
 	}
@@ -284,6 +331,7 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	int D, //number of derivatives
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
@@ -300,7 +348,7 @@ __host__ void DvrKernelForwardGradientsHost(dim3 virtual_size,
 		int y = (__i - (b * virtual_size.x * virtual_size.y)) / virtual_size.x;
 		int x = __i - virtual_size.x * (y + virtual_size.y * b);
 		DvrKernelForwardGradientsImpl<
-			volumeFilterMode, cameraMode, tfMode, blendMode,
+			volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 			D, HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative>(
 				x, y, b, inputs, settings, outputs, gradOutput);
 	}
@@ -317,10 +365,12 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
 	bool HasTFDerivative, bool TfDelayedAccumulation,
-	bool HasVolumeDerivative>
+	bool HasVolumeDerivative,
+    bool hasSegmentationVolumeDerivative>
 __host__ __device__ void DvrKernelAdjointImpl(
 		int x, int y, int b,
 		const RendererInputs& inputs, RendererOutputsAsInput& outputsFromForward,
@@ -384,9 +434,17 @@ __host__ __device__ void DvrKernelAdjointImpl(
 		auto density = volumeInterpolation.fetch(
 			inputs.volume, inputs.volumeSize, b, volumePos);
 		using density_t = decltype(density);
+        density_t gradMag;
 
 		//evaluate transfer function
-		real4 colorAbsorption = transferFunctionEval.eval(inputs.tf, b, density);
+        // TODO: Add support for segmentation backward pass
+        real4 colorAbsorption;
+        if constexpr(tfMode != TFTexture2D) {
+            colorAbsorption = transferFunctionEval.eval(inputs.tf, b, density);
+        } else {
+            gradMag = volumeInterpolation.fetch(inputs.volumeGrad, inputs.volumeSize, b, volumePos);
+            colorAbsorption = transferFunctionEval.eval(inputs.tf, inputs.tfRes, b, density, gradMag);
+        }
 
 		//adjoint blending
 		real4 adj_colorAbsorption;
@@ -396,11 +454,17 @@ __host__ __device__ void DvrKernelAdjointImpl(
 
 		//adjoint transfer function
 		density_t adj_density;
-		transferFunctionEval.template adjoint<HasTFDerivative, TfDelayedAccumulation>(
-			inputs.tf, b, density, adj_colorAbsorption,
-			adj_density, adj_outputs.adj_tf, tf_shared);
-		
-		//adjoint density
+        if constexpr(tfMode != TFTexture2D) {
+            transferFunctionEval.template adjoint<HasTFDerivative, TfDelayedAccumulation>(
+                    inputs.tf, b, density, adj_colorAbsorption,
+                    adj_density, adj_outputs.adj_tf, tf_shared);
+        } else {
+            transferFunctionEval.template adjoint<HasTFDerivative, TfDelayedAccumulation>(
+                    inputs.tf, inputs.tfRes, b, density, gradMag, adj_colorAbsorption,
+                    adj_density, adj_outputs.adj_tf, tf_shared);
+        }
+
+        //adjoint density
 		real3 adj_volumePos;
 		volumeInterpolation.adjoint(adj_density, adj_volumePos);
 
@@ -449,10 +513,12 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
 	bool HasTFDerivative, bool TfDelayedAccumulation,
-	bool HasVolumeDerivative>
+	bool HasVolumeDerivative,
+    bool hasSegmentationVolumeDerivative>
 __global__ void DvrKernelAdjointDevice(dim3 virtual_size,
 		RendererInputs inputs, RendererOutputsAsInput outputsFromForward,
 		AdjointColor_t adj_color, AdjointOutputs adj_outputs)
@@ -460,8 +526,9 @@ __global__ void DvrKernelAdjointDevice(dim3 virtual_size,
 	KERNEL_3D_LOOP(x, y, b, virtual_size)
 	{
 		DvrKernelAdjointImpl<
-			volumeFilterMode, cameraMode, tfMode, blendMode,
-			HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative, TfDelayedAccumulation, HasVolumeDerivative>(
+			volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
+			HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative, TfDelayedAccumulation, HasVolumeDerivative,
+            hasSegmentationVolumeDerivative>(
 				x, y, b, inputs, outputsFromForward, adj_color, adj_outputs);
 	}
 	KERNEL_3D_LOOP_END
@@ -473,10 +540,12 @@ template<
 	CameraMode cameraMode,
 	TFMode tfMode,
 	BlendMode blendMode,
+    SegmentationMode segmentationMode,
 	bool HasStepsizeDerivative,
 	bool HasCameraDerivative,
 	bool HasTFDerivative,
-	bool HasVolumeDerivative>
+	bool HasVolumeDerivative,
+    bool hasSegmentationVolumeDerivative>
 __host__ void DvrKernelAdjointHost(dim3 virtual_size,
 		RendererInputs inputs, RendererOutputsAsInput outputsFromForward,
 		const AdjointColor_t adj_color, AdjointOutputs adj_outputs)
@@ -489,8 +558,8 @@ __host__ void DvrKernelAdjointHost(dim3 virtual_size,
 		int y = (__i - (b * virtual_size.x * virtual_size.y)) / virtual_size.x;
 		int x = __i - virtual_size.x * (y + virtual_size.y * b);
 		DvrKernelAdjointImpl<
-			volumeFilterMode, cameraMode, tfMode, blendMode,
-			HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative, false, HasVolumeDerivative>(
+			volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
+			HasStepsizeDerivative, HasCameraDerivative, HasTFDerivative, false, HasVolumeDerivative, hasSegmentationVolumeDerivative>(
 				x, y, b, inputs, outputsFromForward, adj_color, adj_outputs);
 	}
 }

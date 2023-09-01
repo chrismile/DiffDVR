@@ -120,11 +120,22 @@ if __name__=='__main__':
     raise Exception('Invalid loss type.')
   print(f'Optimizing for loss {loss_name}.')
 
+  # Test case 0: 1D TF, VisHuman Head [512 512 302] (CT)/vmhead.dat
+  # Test case 1: 2D TF, ImageVis3D/head.dat
+  tf_test_case_idx = 0
   optimize_camera = True
   camera_use_bayopt = True
   tf_forward_grad = False
+  use_same_pos_opt = False
+  
+  # TODO: Testing
+  if tf_test_case_idx == 1:
+    optimize_camera = False
+    use_same_pos_opt = True
 
-  print("Create Marschner Lobb")
+  print("Create data set")
+  # Data set test case
+  data_test_case_idx = 1
   #volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.CubeX, 64)
   #volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.MarschnerLobb, 64)
   #data_array = load_dat_raw('/media/christoph/Elements/Datasets/Scalar/Head [512 512 106] (CT)/CT_Head_large.dat')
@@ -133,7 +144,10 @@ if __name__=='__main__':
   else:
     data_set_folder = '/mnt/data/Flow/Scalar'
   # VisHuman Head [256 256 256] (CT)/vmhead256cubed.dat
-  data_array = load_dat_raw(f'{data_set_folder}/VisHuman Head [512 512 302] (CT)/vmhead.dat')
+  if data_test_case_idx == 0:
+    data_array = load_dat_raw(f'{data_set_folder}/VisHuman Head [512 512 302] (CT)/vmhead.dat')
+  elif data_test_case_idx == 1:
+    data_array = load_dat_raw(f'{data_set_folder}/ImageVis3D/head.dat')
   print(data_array.shape)
   volume = pyrenderer.Volume.from_numpy(data_array)
   volume.copy_to_gpu()
@@ -150,8 +164,14 @@ if __name__=='__main__':
 
   opacity_scaling = 50.0
   #tf_mode = pyrenderer.TFMode.Linear
-  tf_mode = pyrenderer.TFMode.Texture
-  res = 32
+  if tf_test_case_idx == 0:
+    tf_mode = pyrenderer.TFMode.Texture
+    res = 32
+  else:
+    tf_mode = pyrenderer.TFMode.Texture2D
+    res_x = 8
+    res_y = 8
+    res = res_x * res_y
   #tf = torch.tensor([[
   #  #r,g,b,a,pos
   #  [0.2313,0.2980,0.7529,0.0 *opacity_scaling,0],
@@ -168,13 +188,20 @@ if __name__=='__main__':
   #  [0.9,0.66,0.55,0.001,0.55],
   #  [0.9,0.99,0.99,0.001,1]
   #]], dtype=dtype, device=device)
-  tf_array = load_tf_from_xml(
-    f'{str(Path.home())}/Programming/C++/Correrender/Data/TransferFunctions/VisHumanHead2.xml',
-    res, opacity_scaling, write_pos=False)
-  #tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3), t[4]] for t in tf_array]
-  tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3)] for t in tf_array]
+  if tf_test_case_idx == 0:
+    if data_test_case_idx == 0:
+      tf_filename = f'{str(Path.home())}/Programming/C++/Correrender/Data/TransferFunctions/VisHumanHead2.xml'
+    elif data_test_case_idx == 1:
+      tf_filename = f'{str(Path.home())}/Programming/C++/Correrender/Data/TransferFunctions/VisHumanHeadB.xml'
+    tf_array = load_tf_from_xml(tf_filename, res, opacity_scaling, write_pos=False)
+    #tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3), t[4]] for t in tf_array]
+    tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3)] for t in tf_array]
+  else:
+    c0 = [1e-3, 1e-3, 1e-3, 1e-3]
+    c1 = [0.0, 0.6, 1.0, opacity_scaling]
+    tf_array = [c1 if 2 <= x <= 3 and 2 <= y <= 3 else c0 for x in range(res_x) for y in range(res_y)]
   tf = torch.tensor([tf_array], dtype=dtype, device=device)
-  
+
   print("Create renderer inputs")
   inputs = pyrenderer.RendererInputs()
   inputs.screen_size = pyrenderer.int2(W, H)
@@ -186,6 +213,14 @@ if __name__=='__main__':
   inputs.tf_mode = tf_mode
   inputs.tf = tf
   inputs.blend_mode = pyrenderer.BlendMode.BeerLambert
+  if tf_test_case_idx != 0:
+    volume_grad = pyrenderer.Volume.create_grad_volume_cpu(volume)
+    volume_grad.copy_to_gpu()
+    inputs.volume_grad = volume_grad.getDataGpu(0)
+    inputs.tf_res_x = res_x
+  else:
+    #inputs.volume_grad = volume.getDataGpu(0)
+    inputs.tf_res_x = res
 
   # settings
   fov_degree = 45.0
@@ -283,13 +318,19 @@ if __name__=='__main__':
     current_yaw = camera_initial_yaw.clone()
     current_distance = camera_initial_distance.clone()
   else:
-    camera_origin = np.array([0.0, -0.9, 0.44])
-    camera_lookat = np.array([0.0, 0.0, 0.0])
-    camera_up = np.array([0,0,1])
+    if use_same_pos_opt:
+      camera_origin = np.array([0.0, -0.71, -0.70])
+      camera_lookat = np.array([0.0, 0.0, 0.0])
+      camera_up = np.array([0,-1,0])
+    else:
+      camera_origin = np.array([0.0, -0.9, 0.44])
+      camera_lookat = np.array([0.0, 0.0, 0.0])
+      camera_up = np.array([0,0,1])
     invViewMatrix = pyrenderer.Camera.compute_matrix(
       make_real3(camera_origin), make_real3(camera_lookat), make_real3(camera_up),
       fov_degree, W, H)
     inputs.camera = invViewMatrix
+    inputs.camera_mode = pyrenderer.CameraMode.InverseViewMatrix
 
   # initialize initial TF and render
   print("Render initial")
@@ -315,8 +356,12 @@ if __name__=='__main__':
   #    max(i / (res - 1), 1e-3) * opacity_scaling,
   #    i / (res - 1)] \
   #  for i in range(res) ]
-  init_tf_array = [
-    [0.5, 0.5, 0.5, max(i / (res - 1), 1e-3) * opacity_scaling] for i in range(res) ]
+  if tf_test_case_idx == 0:
+    init_tf_array = [
+      [0.5, 0.5, 0.5, max(i / (res - 1), 1e-3) * opacity_scaling] for i in range(res) ]
+  else:
+    init_tf_array = [
+      [0.5, 0.5, 0.5, 0.2 * opacity_scaling] for i in range(res) ]
   initial_tf = torch.tensor([init_tf_array], dtype=dtype, device=device)
   print("Initial tf (original):", initial_tf)
   inputs.tf = initial_tf
@@ -430,7 +475,7 @@ if __name__=='__main__':
 
   # run optimization
   tf_transform = TransformTF()
-  iterations = 400  # 400
+  iterations = 20  # 400
   reconstructed_color = []
   reconstructed_tf = []
   reconstructed_viewport = []
@@ -521,11 +566,20 @@ if __name__=='__main__':
   print("Visualize Optimization")
   fig, axs = plt.subplots(3, 2, figsize=(8,6))
   axs[0,0].imshow(reference_color_image[:,:,0:3])
-  tfvis.renderTfTexture(reference_tf, axs[0, 1])
+  if tf_test_case_idx == 0:
+    tfvis.renderTfTexture(reference_tf, axs[0, 1])
+  else:
+    tfvis.renderTfTexture2d(reference_tf, res_x, axs[0, 1])
   axs[1, 0].imshow(reconstructed_color[0])
-  tfvis.renderTfTexture(reconstructed_tf[0], axs[1, 1])
+  if tf_test_case_idx == 0:
+    tfvis.renderTfTexture(reconstructed_tf[0], axs[1, 1])
+  else:
+    tfvis.renderTfTexture2d(reconstructed_tf[0], res_x, axs[1, 1])
   axs[2,0].imshow(initial_color_image[:,:,0:3])
-  tfvis.renderTfTexture(initial_tf, axs[2, 1])
+  if tf_test_case_idx == 0:
+    tfvis.renderTfTexture(initial_tf, axs[2, 1])
+  else:
+    tfvis.renderTfTexture2d(initial_tf, res_x, axs[2, 1])
   axs[0,0].set_title("Color")
   axs[0,1].set_title("Transfer Function")
   axs[0,0].set_ylabel("Reference")
@@ -542,7 +596,10 @@ if __name__=='__main__':
   with tqdm.tqdm(total=len(reconstructed_color)) as pbar:
     def update(frame):
       axs[1, 0].imshow(reconstructed_color[frame])
-      tfvis.renderTfTexture(reconstructed_tf[frame], axs[1, 1])
+      if tf_test_case_idx == 0:
+        tfvis.renderTfTexture(reconstructed_tf[frame], axs[1, 1])
+      else:
+        tfvis.renderTfTexture2d(reconstructed_tf[frame], res_x, axs[1, 1])
       fig.suptitle("Iteration % 4d, Loss: %7.5f"%(frame, reconstructed_loss[frame]))
       if frame>0: pbar.update(1)
     anim = matplotlib.animation.FuncAnimation(fig, update, frames=len(reconstructed_color), blit=False)

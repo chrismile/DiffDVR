@@ -127,10 +127,11 @@ namespace kernel
 
 	enum TFMode
 	{
-		TFIdentity, //identity TF, only scaling on absorption and color
-		TFTexture,  //1D texture
-		TFLinear,   //piecewise linear TF
-		TFGaussian, //sum-of-gaussians
+		TFIdentity,  //identity TF, only scaling on absorption and color
+        TFTexture,   //1D texture
+        TFTexture2D, //2D texture
+		TFLinear,    //piecewise linear TF
+		TFGaussian,  //sum-of-gaussians
 		__TFModeCount__,
 
 		//"Hidden" TF modes, that is, hidden from the GUI and used internally
@@ -138,12 +139,20 @@ namespace kernel
 		TFGaussianLog, //sum-of-gaussians, but the logarithm is returned
 	};
 
-	enum BlendMode
-	{
-		BlendBeerLambert, // alpha = 1 - exp(-absorption*stepsize)
-		BlendAlpha,       // alpha = min(1, absorption*stepsize)
-		__BlendModeCount__
-	};
+    enum BlendMode
+    {
+        BlendBeerLambert, // alpha = 1 - exp(-absorption*stepsize)
+        BlendAlpha,       // alpha = min(1, absorption*stepsize)
+        __BlendModeCount__
+    };
+
+    enum SegmentationMode
+    {
+        SegmentationOff,        // Segmentation is disabled.
+        SegmentationBinary,     // Binary segmentation via softmax.
+        SegmentationMultiClass, // Multi-class segmentation via sigmoid.
+        __SegmentationModeCount__
+    };
 
 	//Inputs to the forward passes
 	//These are the general parameters, some differentiable, some not
@@ -155,6 +164,12 @@ namespace kernel
 		//VolumeFilterMode volumeFilterMode; //-> template parameter
 		Tensor4Read volume; //B*X*Y*Z
 		int3 volumeSize; //X*Y*Z for faster access
+
+        Tensor4Read volumeGrad; //B*X*Y*Z
+
+        // Segmentation volume
+        Tensor5Read segmentationVolume; //B*C*X*Y*Z
+        //SegmentationMode segmentationMode; //-> template parameter
 
 		Tensor2Read boxMin; //B*3
 		Tensor2Read boxSize; //B*3
@@ -174,7 +189,8 @@ namespace kernel
 		Tensor3Read stepSize; //B*H*W
 
 		//TFMode tfMode; //-> template parameter
-		Tensor3Read tf; //B*R*C
+        Tensor3Read tf; //B*R*C
+        int tfRes;
 
 		real_t blendingEarlyOut = real_t(1) - real_t(1e-5);
 	};

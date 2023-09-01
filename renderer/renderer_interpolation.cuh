@@ -16,7 +16,7 @@ namespace kernel {
 	{
 		/**
 		 * \brief Fetches the density from the volume
-		 * \tparam pos_t the typoe of the volume position, either
+		 * \tparam pos_t the type of the volume position, either
 		 *   real3 or cudAD::fvar<real3, D> if forward derivatives are traced
 		 * \param volume the volume tensor B*X*Y*Z
 		 * \param volumeSize the volume size / resolution

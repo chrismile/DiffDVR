@@ -62,31 +62,35 @@ void renderer::RendererCuda::setDebugMode(bool debug)
 	KernelLoader::Instance().setDebugMode(debug);
 }
 
-std::string renderer::RendererCuda::getForwardKernelName(kernel::VolumeFilterMode volumeFilterMode,
-                                                         kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode)
+std::string renderer::RendererCuda::getForwardKernelName(
+        kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode, kernel::TFMode tfMode,
+        kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode)
 {
 	//build kernel name
 	const auto volumeFilterModeName = magic_enum::enum_name(volumeFilterMode);
 	const auto cameraModeName = magic_enum::enum_name(cameraMode);
 	const auto tfModeName = magic_enum::enum_name(tfMode);
-	const auto blendModeName = magic_enum::enum_name(blendMode);
+    const auto blendModeName = magic_enum::enum_name(blendMode);
+    const auto segmentationModeName = magic_enum::enum_name(segmentationMode);
 
 	std::stringstream ss;
 	ss << "kernel::DvrKernelForwardDevice<"
 		<< "kernel::VolumeFilterMode::" << volumeFilterModeName
 		<< ", kernel::CameraMode::" << cameraModeName
 		<< ", kernel::TFMode::" << tfModeName
-		<< ", kernel::BlendMode::" << blendModeName
+        << ", kernel::BlendMode::" << blendModeName
+        << ", kernel::SegmentationMode::" << segmentationModeName
 		<< ">";
 	std::string kernelName = ss.str();
 	return kernelName;
 }
 
-bool renderer::RendererCuda::renderForward(const kernel::RendererInputs& inputs, kernel::RendererOutputs& outputs,
-                                           int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode,
-                                           kernel::TFMode tfMode, kernel::BlendMode blendMode)
+bool renderer::RendererCuda::renderForward(
+        const kernel::RendererInputs& inputs, kernel::RendererOutputs& outputs,
+        int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode,
+        kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode)
 {
-	std::string kernelName = getForwardKernelName(volumeFilterMode, cameraMode, tfMode, blendMode);
+	std::string kernelName = getForwardKernelName(volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode);
 
 	auto kernelFunctionOrOptional = KernelLoader::Instance().getKernelFunction(kernelName);
 	if (!kernelFunctionOrOptional.has_value()) return false;
@@ -117,15 +121,17 @@ bool renderer::RendererCuda::renderForward(const kernel::RendererInputs& inputs,
 	return true;
 }
 
-std::string renderer::RendererCuda::getForwardGradientsKernelName(kernel::VolumeFilterMode volumeFilterMode,
-	kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, int numDerivatives,
-	bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative)
+std::string renderer::RendererCuda::getForwardGradientsKernelName(
+        kernel::VolumeFilterMode volumeFilterMode,
+        kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode,
+        int numDerivatives, bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative)
 {
 	//build kernel name
 	const auto volumeFilterModeName = magic_enum::enum_name(volumeFilterMode);
 	const auto cameraModeName = magic_enum::enum_name(cameraMode);
 	const auto tfModeName = magic_enum::enum_name(tfMode);
-	const auto blendModeName = magic_enum::enum_name(blendMode);
+    const auto blendModeName = magic_enum::enum_name(blendMode);
+    const auto segmentationModeName = magic_enum::enum_name(segmentationMode);
 
 	std::stringstream ss;
 	ss << "kernel::DvrKernelForwardGradientsDevice<"
@@ -133,6 +139,7 @@ std::string renderer::RendererCuda::getForwardGradientsKernelName(kernel::Volume
 		<< ", kernel::CameraMode::" << cameraModeName
 		<< ", kernel::TFMode::" << tfModeName
 		<< ", kernel::BlendMode::" << blendModeName
+        << ", kernel::SegmentationMode::" << segmentationModeName
 		<< ", " << numDerivatives
 		<< ", " << hasStepsizeDerivative
 		<< ", " << hasCameraDerivative
@@ -142,15 +149,16 @@ std::string renderer::RendererCuda::getForwardGradientsKernelName(kernel::Volume
 	return kernelName;
 }
 
-bool renderer::RendererCuda::renderForwardGradients(const kernel::RendererInputs& inputs,
-                                                    const kernel::ForwardDifferencesSettings& settings, kernel::RendererOutputs& outputs,
-                                                    kernel::ForwardDifferencesOutput& gradients, int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode,
-                                                    kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, int numDerivatives,
-                                                    bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative)
+bool renderer::RendererCuda::renderForwardGradients(
+        const kernel::RendererInputs& inputs,
+        const kernel::ForwardDifferencesSettings& settings, kernel::RendererOutputs& outputs,
+        kernel::ForwardDifferencesOutput& gradients, int B, int W, int H, kernel::VolumeFilterMode volumeFilterMode,
+        kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode,
+        int numDerivatives, bool hasStepsizeDerivative, bool hasCameraDerivative, bool hasTFDerivative)
 {
 	//build kernel name
 	std::string kernelName = getForwardGradientsKernelName(
-		volumeFilterMode, cameraMode, tfMode, blendMode,
+		volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
 		numDerivatives, hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative);
 
 	auto kernelFunctionOrOptional = KernelLoader::Instance().getKernelFunction(kernelName);
@@ -224,13 +232,15 @@ std::string renderer::RendererCuda::getForwardVariablesToGradientsName()
 }
 
 std::string renderer::RendererCuda::getAdjointKernelName(kernel::VolumeFilterMode volumeFilterMode,
-	kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode, bool hasStepsizeDerivative,
-	bool hasCameraDerivative, bool hasTFDerivative, bool tfDelayedAccumulation, bool hasVolumeDerivative)
+	kernel::CameraMode cameraMode, kernel::TFMode tfMode, kernel::BlendMode blendMode,
+    kernel::SegmentationMode segmentationMode, bool hasStepsizeDerivative, bool hasCameraDerivative,
+    bool hasTFDerivative, bool tfDelayedAccumulation, bool hasVolumeDerivative, bool hasSegmentationVolumeDerivative)
 {
 	const auto volumeFilterModeName = magic_enum::enum_name(volumeFilterMode);
 	const auto cameraModeName = magic_enum::enum_name(cameraMode);
 	const auto tfModeName = magic_enum::enum_name(tfMode);
 	const auto blendModeName = magic_enum::enum_name(blendMode);
+	const auto segmentationModeName = magic_enum::enum_name(segmentationMode);
 
 	std::stringstream ss;
 	ss << "kernel::DvrKernelAdjointDevice<"
@@ -238,11 +248,13 @@ std::string renderer::RendererCuda::getAdjointKernelName(kernel::VolumeFilterMod
 		<< ", kernel::CameraMode::" << cameraModeName
 		<< ", kernel::TFMode::" << tfModeName
 		<< ", kernel::BlendMode::" << blendModeName
+        << ", kernel::SegmentationMode::" << segmentationModeName
 		<< ", " << hasStepsizeDerivative
 		<< ", " << hasCameraDerivative
 		<< ", " << hasTFDerivative
 		<< ", " << tfDelayedAccumulation
 		<< ", " << hasVolumeDerivative
+        << ", " << hasSegmentationVolumeDerivative
 		<< ">";
 	std::string kernelName = ss.str();
 	return kernelName;
@@ -255,14 +267,15 @@ bool renderer::RendererCuda::renderAdjoint(
 	kernel::AdjointOutputs& adj_outputs, 
 	int B, int W, int H, 
 	kernel::VolumeFilterMode volumeFilterMode, kernel::CameraMode cameraMode, 
-	kernel::TFMode tfMode, kernel::BlendMode blendMode, 
+	kernel::TFMode tfMode, kernel::BlendMode blendMode, kernel::SegmentationMode segmentationMode,
 	bool hasStepsizeDerivative, bool hasCameraDerivative,
-	bool hasTFDerivative, bool tfDelayedAccumulation, bool hasVolumeDerivative)
+	bool hasTFDerivative, bool tfDelayedAccumulation, bool hasVolumeDerivative, bool hasSegmentationVolumeDerivative)
 {
 	//build kernel name
 	std::string kernelName = getAdjointKernelName(
-		volumeFilterMode, cameraMode, tfMode, blendMode,
-		hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, tfDelayedAccumulation, hasVolumeDerivative);
+		volumeFilterMode, cameraMode, tfMode, blendMode, segmentationMode,
+		hasStepsizeDerivative, hasCameraDerivative, hasTFDerivative, tfDelayedAccumulation, hasVolumeDerivative,
+        hasSegmentationVolumeDerivative);
 
 	auto kernelFunctionOrOptional = KernelLoader::Instance().getKernelFunction(kernelName);
 	if (!kernelFunctionOrOptional.has_value()) return false;

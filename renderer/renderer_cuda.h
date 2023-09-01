@@ -38,13 +38,15 @@ struct RendererCuda : public NonAssignable
 		kernel::VolumeFilterMode volumeFilterMode,
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
-		kernel::BlendMode blendMode);
+		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode);
 	
 	std::string getForwardKernelName(
 		kernel::VolumeFilterMode volumeFilterMode,
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
-		kernel::BlendMode blendMode);
+		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode);
 
 	bool renderForwardGradients(
 		const kernel::RendererInputs& inputs,
@@ -56,6 +58,7 @@ struct RendererCuda : public NonAssignable
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
 		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		int numDerivatives,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
@@ -66,6 +69,7 @@ struct RendererCuda : public NonAssignable
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
 		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		int numDerivatives,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
@@ -106,21 +110,25 @@ struct RendererCuda : public NonAssignable
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
 		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
 		bool hasTFDerivative,
 		bool tfDelayedAccumulation,
-		bool hasVolumeDerivative);
+		bool hasVolumeDerivative,
+        bool hasSegmentationVolumeDerivative);
 
 	std::string getAdjointKernelName(kernel::VolumeFilterMode volumeFilterMode,
 		kernel::CameraMode cameraMode,
 		kernel::TFMode tfMode,
 		kernel::BlendMode blendMode,
+        kernel::SegmentationMode segmentationMode,
 		bool hasStepsizeDerivative,
 		bool hasCameraDerivative,
 		bool hasTFDerivative,
 		bool tfDelayedAccumulation,
-		bool hasVolumeDerivative);
+		bool hasVolumeDerivative,
+        bool hasSegmentationVolumeDerivative);
 
 private:
 	bool syncMode = false;

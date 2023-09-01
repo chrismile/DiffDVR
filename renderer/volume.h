@@ -201,6 +201,8 @@ public:
 	static std::unique_ptr<Volume> createFromBuffer(
 		const real_t* buffer, long int sizes[3], long int strides[3]);
 
+    static std::unique_ptr<Volume> createGradientVolume(Volume* densityVolume);
+
 private:
 	bool mipmapCheckOrCreate(int level);
 

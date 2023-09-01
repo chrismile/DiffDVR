@@ -417,6 +417,58 @@ std::unique_ptr<Volume> Volume::createFromBuffer(const real_t* buffer, long int 
 	return vol;
 }
 
+std::unique_ptr<Volume> Volume::createGradientVolume(Volume* densityVolume) {
+    auto *densityBaseLevel = densityVolume->getLevel(0);
+    int sizeX = int(densityBaseLevel->sizeX());
+    int sizeY = int(densityBaseLevel->sizeY());
+    int sizeZ = int(densityBaseLevel->sizeZ());
+    auto gradientVolume = std::make_unique<Volume>(sizeX, sizeY, sizeZ);
+    auto densityData = densityBaseLevel->dataCpu().accessor<real_t, 4>();
+    auto *gradientBaseLevel = gradientVolume->getLevel(0);
+    auto gradientData = gradientBaseLevel->dataCpu().accessor<real_t, 4>();
+#pragma omp parallel for default(none) shared(densityData, gradientData, sizeX, sizeY, sizeZ)
+    for (int x = 0; x < sizeX; ++x) {
+        for (int y = 0; y < sizeY; ++y) {
+            for (int z = 0; z < sizeZ; ++z) {
+                int xl = std::clamp(x - 1, 0, sizeX - 1);
+                int xu = std::clamp(x + 1, 0, sizeX - 1);
+                int yl = std::clamp(y - 1, 0, sizeY - 1);
+                int yu = std::clamp(y + 1, 0, sizeY - 1);
+                int zl = std::clamp(z - 1, 0, sizeZ - 1);
+                int zu = std::clamp(z + 1, 0, sizeZ - 1);
+                auto dx = (densityData[0][xu][y][z] - densityData[0][xl][y][z]) / float(xu - xl);
+                auto dy = (densityData[0][x][yu][z] - densityData[0][x][yl][z]) / float(xu - xl);
+                auto dz = (densityData[0][x][y][zu] - densityData[0][x][y][zl]) / float(xu - xl);
+                float gradMag = std::sqrt(dx * dx + dy * dy + dz * dz);
+                gradientData[0][x][y][z] = gradMag;
+            }
+        }
+    }
+
+    auto maxGrad = 0.0f;
+#if _OPENMP >= 201107
+#pragma omp parallel for shared(gradientData, sizeX, sizeY, sizeZ) reduction(max: maxGrad) default(none)
+#endif
+    for (int x = 0; x < sizeX; ++x) {
+        for (int y = 0; y < sizeY; ++y) {
+            for (int z = 0; z < sizeZ; ++z) {
+                maxGrad = std::max(maxGrad, gradientData[0][x][y][z]);
+            }
+        }
+    }
+
+#pragma omp parallel for shared(gradientData, sizeX, sizeY, sizeZ, maxGrad) default(none)
+    for (int x = 0; x < sizeX; ++x) {
+        for (int y = 0; y < sizeY; ++y) {
+            for (int z = 0; z < sizeZ; ++z) {
+                gradientData[0][x][y][z] /= maxGrad;
+            }
+        }
+    }
+
+    return gradientVolume;
+}
+
 bool Volume::mipmapCheckOrCreate(int level)
 {
 	CHECK_ERROR(level >= 0, "level has to be non-zero, but is ", level);
