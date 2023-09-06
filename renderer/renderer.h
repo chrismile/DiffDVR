@@ -25,7 +25,7 @@ struct RendererInputsHost
 	kernel::VolumeFilterMode volumeFilterMode;
 	torch::Tensor volume; //B*X*Y*Z
     torch::Tensor volumeGrad; //B*X*Y*Z, only for 2D transfer functions
-    torch::Tensor segmentationVolume; //B*C*X*Y*Z
+    torch::Tensor segmentationVolume; //B*X*Y*Z
     kernel::SegmentationMode segmentationMode;
 
 	std::variant<torch::Tensor, real3> boxMin; // (B)*3
@@ -113,8 +113,8 @@ struct AdjointOutputsHost
 	bool tfDelayedAcummulation = false;
 	torch::Tensor adj_tf; // (B)*R*C
 
-    bool hasSegmentationVolumeDerivative = false;
-    torch::Tensor adj_segmentationVolume; // (B)*C*X*Y*Z
+    bool hasSegmentationVolumeDerivatives = false;
+    torch::Tensor adj_segmentationVolume; // (B)*X*Y*Z
 };
 
 class Renderer

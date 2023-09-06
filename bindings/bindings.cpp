@@ -231,8 +231,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 	py::enum_<kernel::BlendMode>(m, "BlendMode")
 		.value("BeerLambert", kernel::BlendMode::BlendBeerLambert)
 		.value("Alpha", kernel::BlendMode::BlendAlpha);
-	
-	py::enum_<Volume::ImplicitEquation>(m, "ImplicitEquation")
+    py::enum_<kernel::SegmentationMode>(m, "SegmentationMode")
+        .value("SegmentationOff", kernel::SegmentationMode::SegmentationOff)
+        .value("SegmentationBinary", kernel::SegmentationMode::SegmentationBinary)
+        .value("SegmentationMultiClass", kernel::SegmentationMode::SegmentationMultiClass);
+
+    py::enum_<Volume::ImplicitEquation>(m, "ImplicitEquation")
 		.value("MarschnerLobb", Volume::ImplicitEquation::MARSCHNER_LOBB)
 		.value("Cube", Volume::ImplicitEquation::CUBE)
 		.value("CubeX", Volume::ImplicitEquation::CUBEX)
@@ -398,6 +402,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 				py::doc("the filter mode used to sample the density volume"))
             .def_readwrite("volume_grad", &RendererInputsHost::volumeGrad,
                 py::doc("the gradient volume tensor of shape B*X*Y*Z (only when using 2D transfer functions)"))
+            .def_readwrite("volume_segmentation", &RendererInputsHost::segmentationVolume,
+                py::doc("the gradient volume tensor of shape B*X*Y*Z (only when using 2D transfer functions)"))
+            .def_readwrite("segmentation_mode", &RendererInputsHost::segmentationMode,
+                py::doc("the gradient volume tensor of shape B*X*Y*Z (only when using 2D transfer functions)"))
 			.def_readwrite("box_min", &RendererInputsHost::boxMin,
 				py::doc("The minimal position of the bounding box.\nSpecified either as single float3 or float tensor of shape B*3."))
 			.def_readwrite("box_size", &RendererInputsHost::boxSize,
@@ -449,6 +457,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 		.def(py::init<>())
 		.def_readwrite("has_volume_derivatives", &AdjointOutputsHost::hasVolumeDerivatives)
 		.def_readwrite("adj_volume", &AdjointOutputsHost::adj_volume)
+        .def_readwrite("has_segmentation_volume_derivatives", &AdjointOutputsHost::hasSegmentationVolumeDerivatives)
+        .def_readwrite("adj_segmentation_volume", &AdjointOutputsHost::adj_segmentationVolume)
 		.def_readwrite("has_stepsize_derivatives", &AdjointOutputsHost::hasStepSizeDerivatives)
 		.def_readwrite("adj_stepsize", &AdjointOutputsHost::adj_stepSize)
 		.def_readwrite("has_camera_derivatives", &AdjointOutputsHost::hasCameraDerivatives)

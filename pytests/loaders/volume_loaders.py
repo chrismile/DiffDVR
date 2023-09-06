@@ -28,6 +28,8 @@
 
 import os
 import numpy as np
+# conda install -c conda-forge nibabel
+import nibabel as nib
 
 
 def get_path_to_file(path):
@@ -148,3 +150,12 @@ def load_dat_raw(file_path):
 
     return array
 
+
+def load_nii(file_path, normalize=False):
+    nii_file = nib.load(file_path)
+    data_array = np.array(nii_file.get_fdata(), dtype=np.float32)
+    if normalize:
+        min_val = np.min(data_array)
+        max_val = np.max(data_array)
+        data_array = (data_array - min_val) / (max_val - min_val)
+    return data_array

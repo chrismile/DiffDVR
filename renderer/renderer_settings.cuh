@@ -62,8 +62,9 @@ namespace kernel
 	typedef PackedTensorAccessor32<real_t, 5, DefaultPtrTraits> Tensor5RW;
 
 	typedef BroadcastingTensorAccessor32<real_t, 3, DefaultPtrTraits> BTensor3RW;
-	typedef BroadcastingTensorAccessor32<real_t, 4, DefaultPtrTraits> BTensor4RW; //Tensor4RW with broadcasting
-	
+    typedef BroadcastingTensorAccessor32<real_t, 4, DefaultPtrTraits> BTensor4RW; //Tensor4RW with broadcasting
+    typedef BroadcastingTensorAccessor32<real_t, 5, DefaultPtrTraits> BTensor5RW; //Tensor5RW with broadcasting
+
 	typedef BroadcastingTensorAccessor32<int, 1, RestrictPtrTraits> ITensor1Read;
 	typedef BroadcastingTensorAccessor32<int, 2, RestrictPtrTraits> ITensor2Read;
 	typedef BroadcastingTensorAccessor32<int, 3, RestrictPtrTraits> ITensor3Read;
@@ -168,7 +169,7 @@ namespace kernel
         Tensor4Read volumeGrad; //B*X*Y*Z
 
         // Segmentation volume
-        Tensor5Read segmentationVolume; //B*C*X*Y*Z
+        Tensor4Read segmentationVolume; //B*X*Y*Z
         //SegmentationMode segmentationMode; //-> template parameter
 
 		Tensor2Read boxMin; //B*3
@@ -257,5 +258,7 @@ namespace kernel
 		BTensor4RW adj_cameraRayDir; // (B)*H*W*3
 
 		BTensor3RW adj_tf; // (B)*R*C
-	};
+
+        BTensor4RW adj_segmentationVolume; // (B)*X*Y*Z
+    };
 }

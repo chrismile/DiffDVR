@@ -17,7 +17,7 @@ from bayes_opt import BayesianOptimization, UtilityFunction
 # load pyrenderer
 from diffdvr import make_real3
 from style.style_loss import StyleLoss, StyleLossType
-from loaders.volume_loaders import load_dat_raw
+from loaders.volume_loaders import load_dat_raw, load_nii
 from loaders.tf_loaders import load_tf_from_xml
 import pyrenderer
 
@@ -120,34 +120,39 @@ if __name__=='__main__':
     raise Exception('Invalid loss type.')
   print(f'Optimizing for loss {loss_name}.')
 
-  # Test case 0: 1D TF, VisHuman Head [512 512 302] (CT)/vmhead.dat
-  # Test case 1: 2D TF, ImageVis3D/head.dat
-  tf_test_case_idx = 0
+  # Test case 0: 1D TF, Scalar/VisHuman Head [512 512 302] (CT)/vmhead.dat
+  # Test case 1: 2D TF, Scalar/ImageVis3D/head.dat
+  # Test case 2: 1D TF binary segmentation, OrganSegmentations/volume-2.nii
+  tf_test_case_idx = 2
   optimize_camera = True
+  optimize_tf = True
   camera_use_bayopt = True
   tf_forward_grad = False
   use_same_pos_opt = False
   
   # TODO: Testing
-  if tf_test_case_idx == 1:
+  if tf_test_case_idx != 0:
     optimize_camera = False
     use_same_pos_opt = True
 
   print("Create data set")
   # Data set test case
-  data_test_case_idx = 1
+  data_test_case_idx = 2
   #volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.CubeX, 64)
   #volume = pyrenderer.Volume.create_implicit(pyrenderer.ImplicitEquation.MarschnerLobb, 64)
   #data_array = load_dat_raw('/media/christoph/Elements/Datasets/Scalar/Head [512 512 106] (CT)/CT_Head_large.dat')
-  if os.path.exists('/media/christoph/Elements/Datasets/Scalar'):
-    data_set_folder = '/media/christoph/Elements/Datasets/Scalar'
+  if os.path.exists('/media/christoph/Elements/Datasets'):
+    data_set_folder = '/media/christoph/Elements/Datasets'
   else:
-    data_set_folder = '/mnt/data/Flow/Scalar'
-  # VisHuman Head [256 256 256] (CT)/vmhead256cubed.dat
+    data_set_folder = '/mnt/data/Flow'
+  # Scalar/VisHuman Head [256 256 256] (CT)/vmhead256cubed.dat
   if data_test_case_idx == 0:
-    data_array = load_dat_raw(f'{data_set_folder}/VisHuman Head [512 512 302] (CT)/vmhead.dat')
+    data_array = load_dat_raw(f'{data_set_folder}/Scalar/VisHuman Head [512 512 302] (CT)/vmhead.dat')
   elif data_test_case_idx == 1:
-    data_array = load_dat_raw(f'{data_set_folder}/ImageVis3D/head.dat')
+    data_array = load_dat_raw(f'{data_set_folder}/Scalar/ImageVis3D/head.dat')
+  elif data_test_case_idx == 2:
+    data_array = load_nii(f'{data_set_folder}/OrganSegmentations/volume-2.nii', normalize=True)
+    label_array = np.round(load_nii(f'{data_set_folder}/OrganSegmentations/labels-2.nii', normalize=False))
   print(data_array.shape)
   volume = pyrenderer.Volume.from_numpy(data_array)
   volume.copy_to_gpu()
@@ -164,14 +169,22 @@ if __name__=='__main__':
 
   opacity_scaling = 50.0
   #tf_mode = pyrenderer.TFMode.Linear
+  segmentation_mode = pyrenderer.SegmentationMode.SegmentationOff
   if tf_test_case_idx == 0:
     tf_mode = pyrenderer.TFMode.Texture
     res = 32
-  else:
+  elif tf_test_case_idx == 1:
     tf_mode = pyrenderer.TFMode.Texture2D
     res_x = 8
     res_y = 8
     res = res_x * res_y
+  elif tf_test_case_idx == 2:
+    tf_mode = pyrenderer.TFMode.Texture
+    res_x = 32
+    res = res_x * 2
+    segmentation_mode = pyrenderer.SegmentationMode.SegmentationBinary
+    optimize_segmentation_volume = False
+    optimize_tf = True
   #tf = torch.tensor([[
   #  #r,g,b,a,pos
   #  [0.2313,0.2980,0.7529,0.0 *opacity_scaling,0],
@@ -196,10 +209,20 @@ if __name__=='__main__':
     tf_array = load_tf_from_xml(tf_filename, res, opacity_scaling, write_pos=False)
     #tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3), t[4]] for t in tf_array]
     tf_array = [[t[0], t[1], t[2], max(t[3], 1e-3)] for t in tf_array]
-  else:
+  elif tf_test_case_idx == 1:
     c0 = [1e-3, 1e-3, 1e-3, 1e-3]
     c1 = [0.0, 0.6, 1.0, opacity_scaling]
     tf_array = [c1 if 2 <= x <= 3 and 2 <= y <= 3 else c0 for x in range(res_x) for y in range(res_y)]
+  elif tf_test_case_idx == 2:
+    c0 = [1e-3, 1e-3, 1e-3, 1e-3]
+    c1 = [1e-3, 0.6, 0.999, opacity_scaling * 0.1]
+    c2 = [0.6, 0.999, 1e-3, opacity_scaling]
+    #tf_array = \
+    #  [c1 if 2 <= x <= 3 else c0 for x in range(res_x)] + \
+    #  [c1 if 2 <= x <= 3 else c0 for x in range(res_x)]
+    tf_array = \
+      [c1 if 2 <= x <= 10 else c0 for x in range(res_x)] + \
+      [c2 if 0 <= x <= 32 else c0 for x in range(res_x)]
   tf = torch.tensor([tf_array], dtype=dtype, device=device)
 
   print("Create renderer inputs")
@@ -213,14 +236,31 @@ if __name__=='__main__':
   inputs.tf_mode = tf_mode
   inputs.tf = tf
   inputs.blend_mode = pyrenderer.BlendMode.BeerLambert
-  if tf_test_case_idx != 0:
+  inputs.segmentation_mode = segmentation_mode
+  if tf_test_case_idx == 0:
+    #inputs.volume_grad = volume.getDataGpu(0)
+    inputs.tf_res_x = res
+  elif tf_test_case_idx == 1:
     volume_grad = pyrenderer.Volume.create_grad_volume_cpu(volume)
     volume_grad.copy_to_gpu()
     inputs.volume_grad = volume_grad.getDataGpu(0)
     inputs.tf_res_x = res_x
-  else:
-    #inputs.volume_grad = volume.getDataGpu(0)
-    inputs.tf_res_x = res
+  elif tf_test_case_idx == 2:
+    mask_val = 0
+    mask_a = label_array == mask_val
+    mask_b = label_array != mask_val
+    label_array[mask_a] = -1e4
+    label_array[mask_b] = 1e4
+    #label_array = np.ones_like(label_array) * -1e4
+    volume_segmentation = pyrenderer.Volume.from_numpy(label_array)
+    volume_segmentation.copy_to_gpu()
+    volume_segmentation_tensor_ref = volume_segmentation.getDataGpu(0)
+    inputs.tf_res_x = res_x
+    if optimize_segmentation_volume:
+      volume_segmentation_tensor = torch.zeros_like(volume_segmentation_tensor_ref)
+    else:
+      volume_segmentation_tensor = volume_segmentation_tensor_ref.clone()
+    inputs.volume_segmentation = volume_segmentation_tensor_ref
 
   # settings
   fov_degree = 45.0
@@ -356,15 +396,21 @@ if __name__=='__main__':
   #    max(i / (res - 1), 1e-3) * opacity_scaling,
   #    i / (res - 1)] \
   #  for i in range(res) ]
-  if tf_test_case_idx == 0:
+  if not optimize_tf:
+    init_tf_array = tf_array
+  elif tf_test_case_idx == 0:
     init_tf_array = [
       [0.5, 0.5, 0.5, max(i / (res - 1), 1e-3) * opacity_scaling] for i in range(res) ]
-  else:
+  elif tf_test_case_idx == 1:
+    init_tf_array = [
+      [0.5, 0.5, 0.5, 0.2 * opacity_scaling] for i in range(res) ]
+  elif tf_test_case_idx == 2:
     init_tf_array = [
       [0.5, 0.5, 0.5, 0.2 * opacity_scaling] for i in range(res) ]
   initial_tf = torch.tensor([init_tf_array], dtype=dtype, device=device)
   print("Initial tf (original):", initial_tf)
   inputs.tf = initial_tf
+  inputs.volume_segmentation = volume_segmentation_tensor
   pyrenderer.Renderer.render_forward(inputs, outputs)
   initial_color_image = output_color.cpu().numpy()[0]
   tf = InverseTransformTF()(initial_tf)
@@ -372,11 +418,16 @@ if __name__=='__main__':
   initial_tf = initial_tf.cpu().numpy()[0]
       
   if not tf_forward_grad:
-    grad_tf = torch.zeros_like(tf)
     adjoint_outputs = pyrenderer.AdjointOutputs()
-    adjoint_outputs.has_tf_derivatives = True
-    adjoint_outputs.tf_delayed_accumulation = True
-    adjoint_outputs.adj_tf = grad_tf
+    if optimize_tf:
+      adjoint_outputs.has_tf_derivatives = True
+      adjoint_outputs.tf_delayed_accumulation = True
+      grad_tf = torch.zeros_like(tf)
+      adjoint_outputs.adj_tf = grad_tf
+    if optimize_segmentation_volume:
+      grad_segmentation_volume = torch.zeros_like(volume_segmentation_tensor)
+      adjoint_outputs.has_segmentation_volume_derivatives = True
+      adjoint_outputs.adj_segmentation_volume = grad_segmentation_volume
 
   # Construct the model
   class RendererDerivCamera(torch.autograd.Function):
@@ -468,20 +519,83 @@ if __name__=='__main__':
       loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
       return loss, transformed_tf, color
       
+  # Construct the model
+  class RendererDerivTFSegmentationAdjoint(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, transformed_tf, volume_segmentation_tensor):
+      inputs.tf = transformed_tf
+      inputs.volume_segmentation = volume_segmentation_tensor
+      # render
+      grad_tf.zero_()
+      grad_segmentation_volume.zero_()
+      pyrenderer.Renderer.render_forward(inputs, outputs)
+      return output_color
+    @staticmethod
+    def backward(ctx, grad_output_color):
+      pyrenderer.Renderer.render_adjoint(inputs, outputs, grad_output_color, adjoint_outputs)
+      return grad_tf, grad_segmentation_volume
+
+  rendererDerivTFSegmentation = RendererDerivTFSegmentationAdjoint.apply
+
+  class OptimModelTFSegmentation(torch.nn.Module):
+    def __init__(self):
+      super().__init__()
+      self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
+    def forward(self, transformed_tf, volume_segmentation_tensor):
+      color = rendererDerivTFSegmentation(transformed_tf, volume_segmentation_tensor)
+      #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
+      loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
+      return loss, transformed_tf, volume_segmentation_tensor, color
+
+  # Construct the model
+  class RendererDerivSegmentationAdjoint(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, volume_segmentation_tensor):
+      inputs.volume_segmentation = volume_segmentation_tensor
+      # render
+      grad_segmentation_volume.zero_()
+      pyrenderer.Renderer.render_forward(inputs, outputs)
+      return output_color
+    @staticmethod
+    def backward(ctx, grad_output_color):
+      pyrenderer.Renderer.render_adjoint(inputs, outputs, grad_output_color, adjoint_outputs)
+      return grad_segmentation_volume
+
+  rendererDerivSegmentation = RendererDerivSegmentationAdjoint.apply
+
+  class OptimModelSegmentation(torch.nn.Module):
+    def __init__(self):
+      super().__init__()
+      self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
+    def forward(self, volume_segmentation_tensor):
+      color = rendererDerivSegmentation(volume_segmentation_tensor)
+      #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
+      loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
+      return loss, volume_segmentation_tensor, color
+
   model_camera = OptimModelCamera()
-  model_tf = OptimModelTF()
+  if optimize_tf:
+    if optimize_segmentation_volume:
+      model_tf = OptimModelTFSegmentation()
+    else:
+      model_tf = OptimModelTF()
+  elif optimize_segmentation_volume:
+    model_tf = OptimModelSegmentation()
 
   start_time = time.time()
 
   # run optimization
   tf_transform = TransformTF()
-  iterations = 20  # 400
+  iterations = 400  # 400
   reconstructed_color = []
   reconstructed_tf = []
   reconstructed_viewport = []
   reconstructed_loss = []
   current_tf = tf.clone()
-  current_tf.requires_grad_()
+  if optimize_tf:
+    current_tf.requires_grad_()
+  if optimize_segmentation_volume:
+    volume_segmentation_tensor.requires_grad_()
   variables = []
   optimize_pitch = True
   optimize_yaw = True
@@ -503,7 +617,12 @@ if __name__=='__main__':
       # For more details see: https://github.com/bayesian-optimization/BayesianOptimization/blob/master/examples/exploitation_vs_exploration.ipynb
       acquisition_function = UtilityFunction(kind="ucb", kappa=10)
       random_state = np.random.RandomState(17)
-  optimizer_tf = torch.optim.Adam([current_tf], lr=0.2)
+  tf_optim_variables = []
+  if optimize_tf:
+    tf_optim_variables.append(current_tf)
+  if optimize_segmentation_volume:
+    tf_optim_variables.append(volume_segmentation_tensor)
+  optimizer_tf = torch.optim.Adam(tf_optim_variables, lr=0.2)
   #optimizer = torch.optim.LBFGS(variables, lr=0.2)
   for iteration in range(iterations):
     # TODO: softplus for opacity, sigmoid for color
@@ -549,7 +668,16 @@ if __name__=='__main__':
       if camera_use_bayopt:
         last_cam_loss = loss_camera.item()
     optimizer_tf.zero_grad()
-    loss_tf, transformed_tf, color = model_tf(transformed_tf)
+    if optimize_tf:
+      if optimize_segmentation_volume:
+        loss_tf, transformed_tf, volume_segmentation_tensor, color = model_tf(transformed_tf, volume_segmentation_tensor)
+      else:
+        loss_tf, transformed_tf, color = model_tf(transformed_tf)
+    else:
+      loss_tf, volume_segmentation_tensor, color = model_tf(volume_segmentation_tensor)
+    #if optimize_segmentation_volume:
+    #  grad_test = grad_segmentation_volume.detach().cpu().numpy()
+    #  print(f'sum: {np.sum(grad_test)}')
     reconstructed_color.append(color.detach().cpu().numpy()[0,:,:,0:3])
     reconstructed_loss.append(loss_tf.item())
     reconstructed_tf.append(transformed_tf.detach().cpu().numpy()[0])
@@ -566,17 +694,17 @@ if __name__=='__main__':
   print("Visualize Optimization")
   fig, axs = plt.subplots(3, 2, figsize=(8,6))
   axs[0,0].imshow(reference_color_image[:,:,0:3])
-  if tf_test_case_idx == 0:
+  if tf_test_case_idx != 1:
     tfvis.renderTfTexture(reference_tf, axs[0, 1])
   else:
     tfvis.renderTfTexture2d(reference_tf, res_x, axs[0, 1])
   axs[1, 0].imshow(reconstructed_color[0])
-  if tf_test_case_idx == 0:
+  if tf_test_case_idx != 1:
     tfvis.renderTfTexture(reconstructed_tf[0], axs[1, 1])
   else:
     tfvis.renderTfTexture2d(reconstructed_tf[0], res_x, axs[1, 1])
   axs[2,0].imshow(initial_color_image[:,:,0:3])
-  if tf_test_case_idx == 0:
+  if tf_test_case_idx != 1:
     tfvis.renderTfTexture(initial_tf, axs[2, 1])
   else:
     tfvis.renderTfTexture2d(initial_tf, res_x, axs[2, 1])
@@ -596,12 +724,13 @@ if __name__=='__main__':
   with tqdm.tqdm(total=len(reconstructed_color)) as pbar:
     def update(frame):
       axs[1, 0].imshow(reconstructed_color[frame])
-      if tf_test_case_idx == 0:
+      if tf_test_case_idx != 1:
         tfvis.renderTfTexture(reconstructed_tf[frame], axs[1, 1])
       else:
         tfvis.renderTfTexture2d(reconstructed_tf[frame], res_x, axs[1, 1])
       fig.suptitle("Iteration % 4d, Loss: %7.5f"%(frame, reconstructed_loss[frame]))
       if frame>0: pbar.update(1)
+    # , cache_frame_data=False
     anim = matplotlib.animation.FuncAnimation(fig, update, frames=len(reconstructed_color), blit=False)
     anim.save(f"test_tf_optimization_{loss_name}.mp4")
   #plt.show()

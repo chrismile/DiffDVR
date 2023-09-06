@@ -103,15 +103,15 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
     const torch::Tensor& segmentationVolume = inputsHost.segmentationVolume;
     auto segmentationMode = inputsHost.segmentationMode;
     if (segmentationMode != kernel::SegmentationOff) {
-        CHECK_DIM(segmentationVolume, 5);
+        CHECK_DIM(segmentationVolume, 4);
         CHECK_CUDA(segmentationVolume, cuda);
         if (!ignoreVolume) {
-            CHECK_DTYPE(volumeGrad, real_dtype);
+            CHECK_DTYPE(segmentationVolume, real_dtype);
             B = volume.size(0);
-            int C = volume.size(1);
-            X = volume.size(2);
-            Y = volume.size(3);
-            Z = volume.size(4);
+            //int C = volume.size(1);
+            X = volume.size(1);
+            Y = volume.size(2);
+            Z = volume.size(3);
             TORCH_CHECK(volume.size(0) == B && volume.size(1) == X && volume.size(2) == Y && volume.size(3) == Z,
                         "Volume and gradient volume must have the same size.");
         }
@@ -256,7 +256,7 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 	CHECK_DIM(tf, 3);
 	CHECK_CUDA(tf, cuda);
 	B = CHECK_BATCH(tf, B);
-    int tfRes = tf.size(1);
+    int tfRes = inputsHost.tfResX == 0 ? int(tf.size(1)) : inputsHost.tfResX;
 	switch (inputsHost.tfMode)
 	{
 	case kernel::TFIdentity:
@@ -296,7 +296,7 @@ std::tuple<kernel::RendererInputs, TensorsToKeepAlive_t>
 		accessor<kernel::Tensor4Read>(volume),
 		make_int3(X, Y, Z),
         accessor<kernel::Tensor4Read>(inputsHost.tfMode == kernel::TFTexture2D ? volumeGrad : volume),
-        accessor<kernel::Tensor5Read>(inputsHost.tfMode == kernel::TFTexture2D ? segmentationVolume : volume),
+        accessor<kernel::Tensor4Read>(inputsHost.segmentationMode != kernel::SegmentationOff ? segmentationVolume : volume),
 		accessor<kernel::Tensor2Read>(boxMin),
 		accessor<kernel::Tensor2Read>(boxSize),
 		accessor<kernel::Tensor4Read>(cameraRayStart),
@@ -401,14 +401,30 @@ static kernel::AdjointOutputs checkAdjointOutput(
 		adj_tfDevice = accessor<kernel::BTensor3RW>(adj_tf);
 	}
 
-	return kernel::AdjointOutputs{
+    kernel::BTensor4RW adj_segmentationVolumeDevice;
+    const bool hasSegmentationVolumeDerivative = adj_outputs.hasSegmentationVolumeDerivatives;
+    if (hasSegmentationVolumeDerivative)
+    {
+        torch::Tensor& adj_segmentationVolume = adj_outputs.adj_segmentationVolume;
+        CHECK_DIM(adj_segmentationVolume, 4);
+        CHECK_CUDA(adj_segmentationVolume, cuda);
+        CHECK_BATCH(adj_segmentationVolume, B);
+        CHECK_SIZE(adj_segmentationVolume, 1, X);
+        CHECK_SIZE(adj_segmentationVolume, 2, Y);
+        CHECK_SIZE(adj_segmentationVolume, 3, Z);
+        CHECK_DTYPE(adj_segmentationVolume, real_dtype);
+        adj_segmentationVolumeDevice = accessor<kernel::BTensor4RW>(adj_segmentationVolume);
+    }
+
+    return kernel::AdjointOutputs{
 		adj_volumeDevice,
 		stepSizeHasBroadcasting,
 		adj_stepSizeDevice,
 		cameraHasBroadcasting,
 		adj_cameraRayStartDevice,
 		adj_cameraRayDirDevice,
-		adj_tfDevice
+		adj_tfDevice,
+        adj_segmentationVolumeDevice
 	};
 }
 
@@ -588,6 +604,8 @@ void renderer::Renderer::forwardVariablesToGradients(const torch::Tensor& forwar
 	//check outputs
 	TORCH_CHECK(!adj_outputs.hasVolumeDerivatives,
 		"volume derivatives are not supported with forward variables");
+    TORCH_CHECK(!adj_outputs.hasSegmentationVolumeDerivatives,
+        "segmentation volume derivatives are not supported with forward variables");
 	auto adj_outputsDevice = checkAdjointOutput(
 		adj_outputs, cuda, B, H, W, -1, -1, -1);
 
@@ -756,10 +774,10 @@ void renderer::Renderer::renderAdjoint(const RendererInputsHost& inputsHost,
 	const bool hasStepSizeDerivative = adj_outputs.hasStepSizeDerivatives;
 	const bool hasCameraDerivative = adj_outputs.hasCameraDerivatives;
 	const bool hasTFDerivative = adj_outputs.hasTFDerivatives;
-    const bool hasSegmentationVolumeDerivative = adj_outputs.hasSegmentationVolumeDerivative;
+    const bool hasSegmentationVolumeDerivative = adj_outputs.hasSegmentationVolumeDerivatives;
 
-	if (!hasTFDerivative && !hasCameraDerivative && 
-		!hasStepSizeDerivative && !hasVolumeDerivative)
+	if (!hasTFDerivative && !hasCameraDerivative && !hasStepSizeDerivative &&
+        !hasVolumeDerivative && !hasSegmentationVolumeDerivative)
 	{
 		std::cerr << "At least one adjoint variable must be activated!" << std::endl;
 		throw std::runtime_error("At least one adjoint variable must be activated!");

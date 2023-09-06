@@ -170,7 +170,23 @@ namespace kernel
 			return lerp(val0, val1, df);
 		}
 
-		template<bool HasTFDerivative, bool DelayedAccumulation>
+        // Segmentation.
+        __host__ __device__ __inline__ real4 evalSeg(
+                const Tensor3Read& tf, int tfRes, int batch, real_t density, int idx) const
+        {
+            const int R = tfRes;
+            //texture linear interpolation
+            const real_t d = density * R - real_t(0.5);
+            const int di = int(floorf(d));
+            const real_t df = d - di;
+            int l = clamp(di, 0, R - 1);
+            int u = clamp(di+1, 0, R - 1);
+            const real4 val0 = fetchReal4(tf, batch, idx * R + l);
+            const real4 val1 = fetchReal4(tf, batch, idx * R + u);
+            return lerp(val0, val1, df);
+        }
+
+        template<bool HasTFDerivative, bool DelayedAccumulation>
 		__host__ __device__ __inline__ void adjoint(
 			const Tensor3Read& tf, int batch, real_t density,
 			const real4& adj_color, real_t& adj_density, 
@@ -218,6 +234,54 @@ namespace kernel
 			}
 			adj_density = adj_df * R;
 		}
+        template<bool HasTFDerivative, bool DelayedAccumulation>
+        __host__ __device__ __inline__ void adjointSeg(
+                const Tensor3Read& tf, int tfRes, int batch, real_t density, int idx, const real_t seg,
+                const real4& adj_color, real_t& adj_density, real4& colorOut,
+                BTensor3RW& adj_tf, real_t* sharedData) const
+        {
+            const int R = tfRes;
+            //texture linear interpolation
+            const real_t d = density * R - real_t(0.5);
+            const int di = int(floorf(d));
+            const real_t df = d - di;
+            const int idx0 = idx * R + clamp(di, 0, R - 1);
+            const int idx1 = idx * R + clamp(di + 1, 0, R - 1);
+            const real4 val0 = fetchReal4(tf, batch, idx0);
+            const real4 val1 = fetchReal4(tf, batch, idx1);
+            colorOut = lerp(val0, val1, df);
+
+            const real_t adj_df = dot(adj_color, val1 - val0);
+            if constexpr (HasTFDerivative)
+            {
+                const real4 adj_val0 = adj_color * (seg * (1 - df));
+                const real4 adj_val1 = adj_color * (seg * df);
+
+                if constexpr (DelayedAccumulation) {
+                    sharedData[4 * idx0 + 0] += adj_val0.x;
+                    sharedData[4 * idx0 + 1] += adj_val0.y;
+                    sharedData[4 * idx0 + 2] += adj_val0.z;
+                    sharedData[4 * idx0 + 3] += adj_val0.w;
+
+                    sharedData[4 * idx1 + 0] += adj_val1.x;
+                    sharedData[4 * idx1 + 1] += adj_val1.y;
+                    sharedData[4 * idx1 + 2] += adj_val1.z;
+                    sharedData[4 * idx1 + 3] += adj_val1.w;
+                }
+                else {
+                    kernel::atomicAdd(&adj_tf[batch][idx0][0], adj_val0.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx0][1], adj_val0.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx0][2], adj_val0.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx0][3], adj_val0.w);
+
+                    kernel::atomicAdd(&adj_tf[batch][idx1][0], adj_val1.x);
+                    kernel::atomicAdd(&adj_tf[batch][idx1][1], adj_val1.y);
+                    kernel::atomicAdd(&adj_tf[batch][idx1][2], adj_val1.z);
+                    kernel::atomicAdd(&adj_tf[batch][idx1][3], adj_val1.w);
+                }
+            }
+            adj_density = adj_df * R;
+        }
 		__host__ __device__ __inline__ void adjointAccumulate(
 			int batch, BTensor3RW& adj_tf, real_t* sharedData) const
 		{
@@ -286,6 +350,45 @@ namespace kernel
 				fetchInt4(d_tf, batch, clamp(di+1, 0, R - 1)));
 			return lerp(val0, val1, broadcast4(df));
 		}
+
+        template<int D, typename density_t>
+        __host__ __device__ __inline__ cudAD::fvar<real4, D> evalForwardGradientsSeg(
+                const Tensor3Read& tf, int tfRes, int batch, density_t density, int idx,
+                const ITensor3Read& d_tf,
+                integral_constant<bool, false> /*hasTFDerivative*/) const
+        {
+            using namespace cudAD;
+            const int R = tfRes;
+            const auto d = density * real_t(R) - real_t(0.5);
+            const int di = int(floorf(static_cast<real_t>(d)));
+            const auto df = d - di;
+            int l = clamp(di, 0, R - 1);
+            int u = clamp(di + 1, 0, R - 1);
+            const real4 val0 = fetchReal4(tf, batch, idx * R + l);
+            const real4 val1 = fetchReal4(tf, batch, idx * R + u);
+            return lerp(val0, val1, broadcast4(df));
+        }
+        template<int D, typename density_t>
+        __host__ __device__ __inline__ cudAD::fvar<real4, D> evalForwardGradientsSeg(
+                const Tensor3Read& tf, int tfRes, int batch, density_t density, int idx,
+                const ITensor3Read& d_tf,
+                integral_constant<bool, true> /*hasTFDerivative*/) const
+        {
+            using namespace cudAD;
+            const int R = tfRes;
+            const auto d = density * real_t(R) - real_t(0.5);
+            const int di = int(floorf(static_cast<real_t>(d)));
+            const auto df = d - di;
+            int l = clamp(di, 0, R - 1);
+            int u = clamp(di + 1, 0, R - 1);
+            int idx0 = idx * R + l;
+            int idx1 = idx * R + u;
+            const fvar<real4, D> val0 = make_real4in<D>(
+                fetchReal4(tf, batch, idx0), fetchInt4(d_tf, batch, idx0));
+            const fvar<real4, D> val1 = make_real4in<D>(
+                fetchReal4(tf, batch, val1), fetchInt4(d_tf, batch, val1));
+            return lerp(val0, val1, broadcast4(df));
+        }
 	};
 
     template<>

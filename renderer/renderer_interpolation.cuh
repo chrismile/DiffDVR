@@ -577,4 +577,5 @@ namespace kernel {
 #undef scatter
 		}
 	};
-	}
+
+}
