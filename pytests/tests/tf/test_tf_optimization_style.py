@@ -124,6 +124,7 @@ if __name__=='__main__':
   # Test case 1: 2D TF, Scalar/ImageVis3D/head.dat
   # Test case 2: 1D TF binary segmentation, OrganSegmentations/volume-2.nii
   tf_test_case_idx = 2
+  tf_test_case_sub_idx = 1
   optimize_camera = True
   optimize_tf = True
   camera_use_bayopt = True
@@ -183,8 +184,8 @@ if __name__=='__main__':
     res_x = 32
     res = res_x * 2
     segmentation_mode = pyrenderer.SegmentationMode.SegmentationBinary
-    optimize_segmentation_volume = False
-    optimize_tf = True
+    optimize_segmentation_volume = True
+    optimize_tf = False
   #tf = torch.tensor([[
   #  #r,g,b,a,pos
   #  [0.2313,0.2980,0.7529,0.0 *opacity_scaling,0],
@@ -217,12 +218,17 @@ if __name__=='__main__':
     c0 = [1e-3, 1e-3, 1e-3, 1e-3]
     c1 = [1e-3, 0.6, 0.999, opacity_scaling * 0.1]
     c2 = [0.6, 0.999, 1e-3, opacity_scaling]
-    #tf_array = \
-    #  [c1 if 2 <= x <= 3 else c0 for x in range(res_x)] + \
-    #  [c1 if 2 <= x <= 3 else c0 for x in range(res_x)]
-    tf_array = \
-      [c1 if 2 <= x <= 10 else c0 for x in range(res_x)] + \
-      [c2 if 0 <= x <= 32 else c0 for x in range(res_x)]
+    tf_filename = f'{str(Path.home())}/Programming/C++/Correrender/Data/TransferFunctions/OrganSegRest.xml'
+    tf_array_background = load_tf_from_xml(tf_filename, res_x, opacity_scaling, write_pos=False)
+    tf_array_background = [[t[0], t[1], t[2], max(t[3], 1e-3)] for t in tf_array_background]
+    if tf_test_case_sub_idx == 0:
+      tf_array = \
+        [c1 if 2 <= x <= 10 else c0 for x in range(res_x)] + \
+        [c2 if 0 <= x <= 32 else c0 for x in range(res_x)]
+    else:
+      tf_array = \
+        tf_array_background + \
+        [c2 if 4 <= x <= 12 else c0 for x in range(res_x)]
   tf = torch.tensor([tf_array], dtype=dtype, device=device)
 
   print("Create renderer inputs")
@@ -246,9 +252,12 @@ if __name__=='__main__':
     inputs.volume_grad = volume_grad.getDataGpu(0)
     inputs.tf_res_x = res_x
   elif tf_test_case_idx == 2:
-    mask_val = 0
-    mask_a = label_array == mask_val
-    mask_b = label_array != mask_val
+    #mask_val = 0
+    #mask_a = label_array == mask_val
+    #mask_b = label_array != mask_val
+    mask_val = 4
+    mask_a = label_array != mask_val
+    mask_b = label_array == mask_val
     label_array[mask_a] = -1e4
     label_array[mask_b] = 1e4
     #label_array = np.ones_like(label_array) * -1e4
@@ -358,19 +367,31 @@ if __name__=='__main__':
     current_yaw = camera_initial_yaw.clone()
     current_distance = camera_initial_distance.clone()
   else:
+    #if use_same_pos_opt:
+    #  camera_origin = np.array([0.0, -0.71, -0.70])
+    #  camera_lookat = np.array([0.0, 0.0, 0.0])
+    #  camera_up = np.array([0,-1,0])
+    #else:
+    #  camera_origin = np.array([0.0, -0.9, 0.44])
+    #  camera_lookat = np.array([0.0, 0.0, 0.0])
+    #  camera_up = np.array([0,0,1])
+    #invViewMatrix = pyrenderer.Camera.compute_matrix(
+    #  make_real3(camera_origin), make_real3(camera_lookat), make_real3(camera_up),
+    #  fov_degree, W, H)
+    #inputs.camera = invViewMatrix
+    #inputs.camera_mode = pyrenderer.CameraMode.InverseViewMatrix
     if use_same_pos_opt:
-      camera_origin = np.array([0.0, -0.71, -0.70])
-      camera_lookat = np.array([0.0, 0.0, 0.0])
-      camera_up = np.array([0,-1,0])
+      inputs.camera = pyrenderer.CameraPerPixelRays(ray_start_ref, ray_dir_ref)
+      inputs.camera_mode = pyrenderer.CameraMode.RayStartDir
     else:
       camera_origin = np.array([0.0, -0.9, 0.44])
       camera_lookat = np.array([0.0, 0.0, 0.0])
       camera_up = np.array([0,0,1])
-    invViewMatrix = pyrenderer.Camera.compute_matrix(
-      make_real3(camera_origin), make_real3(camera_lookat), make_real3(camera_up),
-      fov_degree, W, H)
-    inputs.camera = invViewMatrix
-    inputs.camera_mode = pyrenderer.CameraMode.InverseViewMatrix
+      invViewMatrix = pyrenderer.Camera.compute_matrix(
+        make_real3(camera_origin), make_real3(camera_lookat), make_real3(camera_up),
+        fov_degree, W, H)
+      inputs.camera = invViewMatrix
+      inputs.camera_mode = pyrenderer.CameraMode.InverseViewMatrix
 
   # initialize initial TF and render
   print("Render initial")
@@ -513,7 +534,7 @@ if __name__=='__main__':
     def __init__(self):
       super().__init__()
       self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
-    def forward(self, transformed_tf):
+    def forward(self, iteration, transformed_tf):
       color = rendererDerivTF(transformed_tf)
       #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
       loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
@@ -541,10 +562,14 @@ if __name__=='__main__':
     def __init__(self):
       super().__init__()
       self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
-    def forward(self, transformed_tf, volume_segmentation_tensor):
+      self.sigmoid = torch.nn.Sigmoid()
+    def forward(self, iteration, transformed_tf, volume_segmentation_tensor):
       color = rendererDerivTFSegmentation(transformed_tf, volume_segmentation_tensor)
       #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
       loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
+      if iteration > 100:
+        svol = self.sigmoid(volume_segmentation_tensor)
+        loss = loss + torch.mean(-4 * (svol * svol - svol))
       return loss, transformed_tf, volume_segmentation_tensor, color
 
   # Construct the model
@@ -567,10 +592,14 @@ if __name__=='__main__':
     def __init__(self):
       super().__init__()
       self.style_loss = StyleLoss(reference_color_gpu.permute(0, 3, 1, 2)[:, 0:3, :, :], loss_type=loss_type)
-    def forward(self, volume_segmentation_tensor):
+      self.sigmoid = torch.nn.Sigmoid()
+    def forward(self, iteration, volume_segmentation_tensor):
       color = rendererDerivSegmentation(volume_segmentation_tensor)
       #loss = torch.nn.functional.mse_loss(color, reference_color_gpu)
       loss = self.style_loss(color.permute(0, 3, 1, 2)[:, 0:3, :, :])
+      if iteration > 100:
+        svol = self.sigmoid(volume_segmentation_tensor)
+        loss = loss + torch.mean(-4 * (svol * svol - svol))
       return loss, volume_segmentation_tensor, color
 
   model_camera = OptimModelCamera()
@@ -610,7 +639,11 @@ if __name__=='__main__':
     if optimize_distance:
       current_distance.requires_grad_()
       variables.append(current_distance)
-    optimizer_camera = torch.optim.Adam(variables, lr=0.2)
+    learning_rate = 0.2
+    if optimize_segmentation_volume:
+      # TODO: This is a test to see if faster convergence is possible.
+      learning_rate = 1000.0
+    optimizer_camera = torch.optim.Adam(variables, lr=learning_rate)
     if camera_use_bayopt:
       last_cam_loss = np.inf
       # Default is UCB with kappa=2.576
@@ -670,11 +703,11 @@ if __name__=='__main__':
     optimizer_tf.zero_grad()
     if optimize_tf:
       if optimize_segmentation_volume:
-        loss_tf, transformed_tf, volume_segmentation_tensor, color = model_tf(transformed_tf, volume_segmentation_tensor)
+        loss_tf, transformed_tf, volume_segmentation_tensor, color = model_tf(iteration, transformed_tf, volume_segmentation_tensor)
       else:
-        loss_tf, transformed_tf, color = model_tf(transformed_tf)
+        loss_tf, transformed_tf, color = model_tf(iteration, transformed_tf)
     else:
-      loss_tf, volume_segmentation_tensor, color = model_tf(volume_segmentation_tensor)
+      loss_tf, volume_segmentation_tensor, color = model_tf(iteration, volume_segmentation_tensor)
     #if optimize_segmentation_volume:
     #  grad_test = grad_segmentation_volume.detach().cpu().numpy()
     #  print(f'sum: {np.sum(grad_test)}')
@@ -723,15 +756,17 @@ if __name__=='__main__':
   print("Write frames")
   with tqdm.tqdm(total=len(reconstructed_color)) as pbar:
     def update(frame):
+      axs[1, 0].clear()
       axs[1, 0].imshow(reconstructed_color[frame])
       if tf_test_case_idx != 1:
         tfvis.renderTfTexture(reconstructed_tf[frame], axs[1, 1])
       else:
         tfvis.renderTfTexture2d(reconstructed_tf[frame], res_x, axs[1, 1])
       fig.suptitle("Iteration % 4d, Loss: %7.5f"%(frame, reconstructed_loss[frame]))
-      if frame>0: pbar.update(1)
-    # , cache_frame_data=False
-    anim = matplotlib.animation.FuncAnimation(fig, update, frames=len(reconstructed_color), blit=False)
+      if frame > 0:
+        pbar.update(1)
+    anim = matplotlib.animation.FuncAnimation(
+      fig, update, frames=len(reconstructed_color), cache_frame_data=False)
     anim.save(f"test_tf_optimization_{loss_name}.mp4")
   #plt.show()
 

@@ -137,7 +137,8 @@ def renderTfTexture(
   # axes to arrows
   axes.spines['right'].set_visible(False)
   axes.spines['top'].set_visible(False)
-  arrowed_spines(plt.gca(), labels=('d', 'tf'))
+  # Causes memory leak
+  #arrowed_spines(plt.gca(), labels=('d', 'tf'))
 
 def renderTfTexture2d(
         tf : np.ndarray, # R*4
@@ -182,4 +183,5 @@ def renderTfTexture2d(
   # axes to arrows
   axes.spines['right'].set_visible(False)
   axes.spines['top'].set_visible(False)
-  arrowed_spines(plt.gca(), labels=('d', 'g'))
+  # Causes memory leak
+  #arrowed_spines(plt.gca(), labels=('d', 'g'))
