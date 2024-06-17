@@ -236,7 +236,7 @@ namespace kernel
 		}
         template<bool HasTFDerivative, bool DelayedAccumulation>
         __host__ __device__ __inline__ void adjointSeg(
-                const Tensor3Read& tf, int tfRes, int batch, real_t density, int idx, const real_t seg,
+                const Tensor3Read& tf, int tfRes, int batch, real_t density, int idx, const real4& adj_colorSeg,
                 const real4& adj_color, real_t& adj_density, real4& colorOut,
                 BTensor3RW& adj_tf, real_t* sharedData) const
         {
@@ -254,8 +254,8 @@ namespace kernel
             const real_t adj_df = dot(adj_color, val1 - val0);
             if constexpr (HasTFDerivative)
             {
-                const real4 adj_val0 = adj_color * (seg * (1 - df));
-                const real4 adj_val1 = adj_color * (seg * df);
+                const real4 adj_val0 = adj_colorSeg * (1 - df);
+                const real4 adj_val1 = adj_colorSeg * df;
 
                 if constexpr (DelayedAccumulation) {
                     sharedData[4 * idx0 + 0] += adj_val0.x;

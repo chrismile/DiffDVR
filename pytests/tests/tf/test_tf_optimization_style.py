@@ -168,6 +168,7 @@ if __name__=='__main__':
   device = volume.getDataGpu(0).device
   dtype = volume.getDataGpu(0).dtype
 
+  test_second_view = False
   opacity_scaling = 50.0
   #tf_mode = pyrenderer.TFMode.Linear
   segmentation_mode = pyrenderer.SegmentationMode.SegmentationOff
@@ -186,6 +187,7 @@ if __name__=='__main__':
     segmentation_mode = pyrenderer.SegmentationMode.SegmentationBinary
     optimize_segmentation_volume = True
     optimize_tf = False
+    test_second_view = True
   #tf = torch.tensor([[
   #  #r,g,b,a,pos
   #  [0.2313,0.2980,0.7529,0.0 *opacity_scaling,0],
@@ -298,6 +300,19 @@ if __name__=='__main__':
     ray_start_ref, ray_dir_ref = pyrenderer.Camera.generate_rays(
       viewport_ref, fov_radians, W, H)
     inputs.camera = pyrenderer.CameraPerPixelRays(ray_start_ref, ray_dir_ref)
+  
+  if test_second_view:
+    camera_test_pitch = torch.tensor([[np.radians(-45)]], dtype=dtype, device=device)
+    camera_test_yaw = torch.tensor([[np.radians(-40)]], dtype=dtype, device=device)
+    viewport_test = pyrenderer.Camera.viewport_from_sphere(
+      camera_ref_center, camera_test_yaw, camera_test_pitch, camera_ref_distance, camera_ref_orientation)
+    ray_start_test, ray_dir_test = pyrenderer.Camera.generate_rays(
+      viewport_test, fov_radians, W, H)
+    camera_test_second_view = pyrenderer.CameraPerPixelRays(ray_start_test, ray_dir_test)
+
+    output_color_test = torch.empty(1, H, W, 4, dtype=dtype, device=device)
+    output_termination_index_test = torch.empty(1, H, W, dtype=torch.int32, device=device)
+    outputs_test = pyrenderer.RendererOutputs(output_color_test, output_termination_index_test)
 
   print("Create forward difference settings")
   differences_settings_camera = pyrenderer.ForwardDifferencesSettings()
@@ -620,6 +635,7 @@ if __name__=='__main__':
   reconstructed_tf = []
   reconstructed_viewport = []
   reconstructed_loss = []
+  second_view_images = []
   current_tf = tf.clone()
   if optimize_tf:
     current_tf.requires_grad_()
@@ -639,11 +655,7 @@ if __name__=='__main__':
     if optimize_distance:
       current_distance.requires_grad_()
       variables.append(current_distance)
-    learning_rate = 0.2
-    if optimize_segmentation_volume:
-      # TODO: This is a test to see if faster convergence is possible.
-      learning_rate = 1000.0
-    optimizer_camera = torch.optim.Adam(variables, lr=learning_rate)
+    optimizer_camera = torch.optim.Adam(variables, lr=0.2)
     if camera_use_bayopt:
       last_cam_loss = np.inf
       # Default is UCB with kappa=2.576
@@ -655,7 +667,11 @@ if __name__=='__main__':
     tf_optim_variables.append(current_tf)
   if optimize_segmentation_volume:
     tf_optim_variables.append(volume_segmentation_tensor)
-  optimizer_tf = torch.optim.Adam(tf_optim_variables, lr=0.2)
+  learning_rate = 0.2
+  if optimize_segmentation_volume:
+    # TODO: This is a test to see if faster convergence is possible.
+    learning_rate = 10.0
+  optimizer_tf = torch.optim.Adam(tf_optim_variables, lr=learning_rate)
   #optimizer = torch.optim.LBFGS(variables, lr=0.2)
   for iteration in range(iterations):
     # TODO: softplus for opacity, sigmoid for color
@@ -716,6 +732,14 @@ if __name__=='__main__':
     reconstructed_tf.append(transformed_tf.detach().cpu().numpy()[0])
     loss_tf.backward()
     optimizer_tf.step()
+    if test_second_view:
+      with torch.no_grad():
+        inputs_cpy = inputs.clone()
+        inputs_cpy.camera = camera_test_second_view
+        pyrenderer.Renderer.render_forward(inputs_cpy, outputs_test)
+        test_image = output_color_test.cpu().numpy()[0]
+        second_view_images.append(test_image)
+        #inputs.camera = old_cam
     if optimize_camera:
       print("Iteration % 4d, Loss_Cam %7.5f Loss_TF %7.5f"%(iteration, loss_camera.item(), loss_tf.item()))
     else:
@@ -745,7 +769,10 @@ if __name__=='__main__':
   axs[0,1].set_title("Transfer Function")
   axs[0,0].set_ylabel("Reference")
   axs[1,0].set_ylabel("Optimization")
-  axs[2,0].set_ylabel("Initial")
+  if test_second_view:
+    axs[2,0].set_ylabel("Side View")
+  else:
+    axs[2,0].set_ylabel("Initial")
   for i in range(3):
     for j in range(2):
       axs[i,j].set_xticks([])
@@ -762,6 +789,9 @@ if __name__=='__main__':
         tfvis.renderTfTexture(reconstructed_tf[frame], axs[1, 1])
       else:
         tfvis.renderTfTexture2d(reconstructed_tf[frame], res_x, axs[1, 1])
+      if test_second_view:
+        axs[2, 0].clear()
+        axs[2, 0].imshow(second_view_images[frame][:,:,0:3])
       fig.suptitle("Iteration % 4d, Loss: %7.5f"%(frame, reconstructed_loss[frame]))
       if frame > 0:
         pbar.update(1)

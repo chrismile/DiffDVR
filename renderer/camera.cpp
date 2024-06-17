@@ -113,15 +113,53 @@ void Camera::computeMatrices(float3 cameraOrigin_, float3 cameraLookAt_, float3 
 glm::mat4 Camera::computeInverseViewProjectionMatrix(float3 cameraOrigin, float3 cameraLookAt, float3 cameraUp,
 	float fovDegrees, int width, int height, float nearClip, float farClip)
 {
-	//std::cout << "origin: " << cameraOrigin << ", look-at: " << cameraLookAt
-	//	<< ", up: " << cameraUp << ", fov: " << fovDegrees << ", width: " << width
-	//	<< ", height: " << height << ", near-clip: " << nearClip << ", far-clip: " << farClip
-	//	<< std::endl;
+    //std::cout << "origin: " << cameraOrigin << ", look-at: " << cameraLookAt
+    //	<< ", up: " << cameraUp << ", fov: " << fovDegrees << ", width: " << width
+    //	<< ", height: " << height << ", near-clip: " << nearClip << ", far-clip: " << farClip
+    //	<< std::endl;
 	glm::mat4 viewMatrix, viewMatrixInverse, normalMatrix;
 	computeMatrices(cameraOrigin, cameraLookAt, cameraUp, fovDegrees, width, height,
 		nearClip, farClip, viewMatrix, viewMatrixInverse, normalMatrix);
-	//std::cout << "matrix:\n" << glm::to_string(viewMatrixInverse) << std::endl;
+    //std::cout << "matrix:\n" << glm::to_string(viewMatrixInverse) << std::endl;
 	return viewMatrixInverse;
+}
+
+glm::mat4 Camera::computeInverseViewProjectionMatrix2(
+        float3 cameraOrigin_, float3 cameraRight_, float3 cameraUp_, float3 cameraFront_,
+        float fovDegrees, int width, int height, float nearClip, float farClip)
+{
+    const glm::vec3 cameraOrigin = *reinterpret_cast<glm::vec3*>(&cameraOrigin_.x);
+    const glm::vec3 cameraRight = *reinterpret_cast<glm::vec3*>(&cameraRight_.x);
+    const glm::vec3 cameraUp = *reinterpret_cast<glm::vec3*>(&cameraUp_.x);
+    const glm::vec3 cameraFront = *reinterpret_cast<glm::vec3*>(&cameraFront_.x);
+
+    float fovRadians = glm::radians(fovDegrees);
+
+    auto inverseViewMatrix = glm::identity<glm::mat4>();
+    for (int row = 0; row < 3; row++) {
+        inverseViewMatrix[0][row] = cameraRight[row];
+        inverseViewMatrix[1][row] = cameraUp[row];
+        inverseViewMatrix[2][row] = cameraFront[row];
+        inverseViewMatrix[3][row] = cameraOrigin[row];
+    }
+    auto viewMatrix = glm::inverse(inverseViewMatrix);
+
+    //std::cout << "inverseViewMatrix:" << std::endl;
+    //std::cout << inverseViewMatrix[0][0] << ", " << inverseViewMatrix[0][1] << ", " << inverseViewMatrix[0][2] << std::endl;
+    //std::cout << inverseViewMatrix[1][0] << ", " << inverseViewMatrix[1][1] << ", " << inverseViewMatrix[1][2] << std::endl;
+    //std::cout << inverseViewMatrix[2][0] << ", " << inverseViewMatrix[2][1] << ", " << inverseViewMatrix[2][2] << std::endl;
+    glm::mat4 projMatrix = perspectiveFovLH_ZO(fovRadians, float(width), float(height), nearClip, farClip);
+
+    glm::mat4 viewProjMatrix = projMatrix * viewMatrix;
+    glm::mat4 invViewProjMatrix = glm::inverse(viewProjMatrix);
+    glm::mat4 normalMatrix = glm::inverse(glm::transpose(glm::mat4(glm::mat3(viewMatrix))));
+
+    viewProjMatrix = glm::transpose(viewProjMatrix);
+    invViewProjMatrix = glm::transpose(invViewProjMatrix);
+    normalMatrix = glm::transpose(normalMatrix);
+    normalMatrix[0] = -normalMatrix[0]; //somehow, the networks were trained with normal-x inverted
+
+    return invViewProjMatrix;
 }
 
 torch::Tensor Camera::viewportFromLookAt(const torch::Tensor& origin, const torch::Tensor& lookAt,

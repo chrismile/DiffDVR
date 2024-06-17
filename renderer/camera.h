@@ -35,21 +35,37 @@ public:
 		float fovDegrees, int width, int height, float nearClip, float farClip,
 		glm::mat4& viewMatrixOut, glm::mat4& viewMatrixInverseOut, glm::mat4& normalMatrixOut
 	);
-	/**
-	 * \brief Computes the inverse view-projection matrix.
-	 * Not differentiable!
-	 * \param cameraOrigin camera origin / eye pos
-	 * \param cameraLookAt look at / target
-	 * \param cameraUp up vector
-	 * \param fovDegrees vertical field-of-views in degree
-	 * \param width the width of the screen
-	 * \param height the height of the screen
-	 * \param nearClip the near clipping plane
-	 * \param farClip the far clipping plane
-	 */
-	static glm::mat4 computeInverseViewProjectionMatrix(
-		float3 cameraOrigin, float3 cameraLookAt, float3 cameraUp,
-		float fovDegrees, int width, int height, float nearClip, float farClip);
+    /**
+     * \brief Computes the inverse view-projection matrix.
+     * Not differentiable!
+     * \param cameraOrigin camera origin / eye pos
+     * \param cameraLookAt look at / target
+     * \param cameraUp up vector
+     * \param fovDegrees vertical field-of-views in degree
+     * \param width the width of the screen
+     * \param height the height of the screen
+     * \param nearClip the near clipping plane
+     * \param farClip the far clipping plane
+     */
+    static glm::mat4 computeInverseViewProjectionMatrix(
+            float3 cameraOrigin, float3 cameraLookAt, float3 cameraUp,
+            float fovDegrees, int width, int height, float nearClip, float farClip);
+    /**
+     * \brief Computes the inverse view-projection matrix.
+     * Not differentiable!
+     * \param cameraOrigin camera origin / eye pos
+     * \param cameraRight right vector
+     * \param cameraUp up vector
+     * \param cameraFront front vector
+     * \param fovDegrees vertical field-of-views in degree
+     * \param width the width of the screen
+     * \param height the height of the screen
+     * \param nearClip the near clipping plane
+     * \param farClip the far clipping plane
+     */
+    static glm::mat4 computeInverseViewProjectionMatrix2(
+            float3 cameraOrigin, float3 cameraRight, float3 cameraUp, float3 cameraFront,
+            float fovDegrees, int width, int height, float nearClip, float farClip);
 
 	enum Orientation
 	{

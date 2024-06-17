@@ -15,6 +15,9 @@
 namespace kernel {
 	extern __shared__ real_t shared[];
 
+    // Whether to interpolate colors pre-multiplied by their alpha value for segmentation TFs.
+    const bool usePremulAlphaInterpolation = true;
+
 //=======================================================
 // forward simple (no gradients)
 //=======================================================
@@ -103,7 +106,21 @@ __host__ __device__ void DvrKernelForwardImpl(
                 auto S = sigmoid(seg);
                 real4 c0 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 0);
                 real4 c1 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 1);
+                if constexpr (usePremulAlphaInterpolation) {
+                    c0.x *= c0.w;
+                    c0.y *= c0.w;
+                    c0.z *= c0.w;
+                    c1.x *= c1.w;
+                    c1.y *= c1.w;
+                    c1.z *= c1.w;
+                }
                 colorAbsorption = lerp(c0, c1, S);
+                if constexpr (usePremulAlphaInterpolation) {
+                    float a = colorAbsorption.w + 1e-6f;
+                    colorAbsorption.x /= a;
+                    colorAbsorption.y /= a;
+                    colorAbsorption.z /= a;
+                }
             } else if constexpr (segmentationMode == SegmentationMode::SegmentationMultiClass) {
                 int C = inputs.segmentationVolume.size(1);
                 float softmaxSum = 0.0f;
@@ -290,7 +307,21 @@ __host__ __device__ void DvrKernelForwardGradientsImpl(
                         inputs.tf, inputs.tfRes, b, density, 0, settings.d_tf, integral_constant<bool, HasTFDerivative>());
                 auto c1 = transferFunctionEval.template evalForwardGradientsSeg<D>(
                         inputs.tf, inputs.tfRes, b, density, 1, settings.d_tf, integral_constant<bool, HasTFDerivative>());
+                if constexpr (usePremulAlphaInterpolation) {
+                    c0.x *= c0.w;
+                    c0.y *= c0.w;
+                    c0.z *= c0.w;
+                    c1.x *= c1.w;
+                    c1.y *= c1.w;
+                    c1.z *= c1.w;
+                }
                 colorAbsorption = lerp(c0, c1, S);
+                if constexpr (usePremulAlphaInterpolation) {
+                    float a = colorAbsorption.w + 1e-6f;
+                    colorAbsorption.x /= a;
+                    colorAbsorption.y /= a;
+                    colorAbsorption.z /= a;
+                }
             }
         }
 
@@ -472,6 +503,7 @@ __host__ __device__ void DvrKernelAdjointImpl(
         // TODO: Add support for segmentation backward pass
         real4 colorAbsorption;
         density_t adj_segmentation;
+        real4 c0, c1;
         if constexpr (segmentationMode == SegmentationMode::SegmentationOff) {
             if constexpr (tfMode != TFTexture2D) {
                 colorAbsorption = transferFunctionEval.eval(inputs.tf, b, density);
@@ -483,9 +515,23 @@ __host__ __device__ void DvrKernelAdjointImpl(
             if constexpr (segmentationMode == SegmentationMode::SegmentationBinary) {
                 seg = volumeInterpolationSegmentation.fetch(inputs.segmentationVolume, inputs.volumeSize, b, volumePos);
                 S = sigmoid(seg);
-                real4 c0 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 0);
-                real4 c1 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 1);
+                c0 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 0);
+                c1 = transferFunctionEval.evalSeg(inputs.tf, inputs.tfRes, b, density, 1);
+                if constexpr (usePremulAlphaInterpolation) {
+                    c0.x *= c0.w;
+                    c0.y *= c0.w;
+                    c0.z *= c0.w;
+                    c1.x *= c1.w;
+                    c1.y *= c1.w;
+                    c1.z *= c1.w;
+                }
                 colorAbsorption = lerp(c0, c1, S);
+                if constexpr (usePremulAlphaInterpolation) {
+                    float a = colorAbsorption.w + 1e-6f;
+                    colorAbsorption.x /= a;
+                    colorAbsorption.y /= a;
+                    colorAbsorption.z /= a;
+                }
                 //if constexpr (HasSegmentationVolumeDerivative) {
                 //    adj_segmentation = S * (1 - S) * dot(adj_colorAbsorption, c1 - c0);
                 //}
@@ -517,16 +563,45 @@ __host__ __device__ void DvrKernelAdjointImpl(
         } else if constexpr (tfMode == TFMode::TFTexture) {
             if constexpr (segmentationMode == SegmentationMode::SegmentationBinary) {
                 density_t adj_densityTmp = 0;
-                real4 c0, c1;
+                real4 adj_colSeg;
+                density_t a = c0.w + c1.w;
+                if constexpr (usePremulAlphaInterpolation) {
+                    adj_colSeg.x = (1 - S) * c0.w / a;
+                    adj_colSeg.y = adj_colSeg.x;
+                    adj_colSeg.z = adj_colSeg.x;
+                    adj_colSeg.w = (1 - S) - S / a * (c1.x + c1.y + c1.z);
+                    adj_colSeg *= adj_colorAbsorption;
+                } else {
+                    adj_colSeg = (1 - S) * adj_colorAbsorption;
+                }
                 transferFunctionEval.template adjointSeg<HasTFDerivative, TfDelayedAccumulation>(
-                        inputs.tf, inputs.tfRes, b, density, 0, 1 - S,
+                        inputs.tf, inputs.tfRes, b, density, 0, adj_colSeg,
                         adj_colorAbsorption, adj_densityTmp, c0, adj_outputs.adj_tf, tf_shared);
+
+                if constexpr (usePremulAlphaInterpolation) {
+                    adj_colSeg.x = S * c1.w / a;
+                    adj_colSeg.y = adj_colSeg.x;
+                    adj_colSeg.z = adj_colSeg.x;
+                    adj_colSeg.w = S - (1 - S) / a * (c0.x + c0.y + c0.z);
+                    adj_colSeg *= adj_colorAbsorption;
+                } else {
+                    adj_colSeg = S * adj_colorAbsorption;
+                }
                 adj_density = (1 - S) * adj_densityTmp;
                 transferFunctionEval.template adjointSeg<HasTFDerivative, TfDelayedAccumulation>(
-                        inputs.tf, inputs.tfRes, b, density, 1, S,
+                        inputs.tf, inputs.tfRes, b, density, 1, adj_colSeg,
                         adj_colorAbsorption, adj_densityTmp, c1, adj_outputs.adj_tf, tf_shared);
+
                 if constexpr (HasSegmentationVolumeDerivative) {
-                    adj_segmentation = S * (1 - S) * dot(adj_colorAbsorption, c1 - c0);
+                    if constexpr (usePremulAlphaInterpolation) {
+                        adj_segmentation = adj_colorAbsorption.w * (c1.w - c0.w);
+                        adj_segmentation += adj_colorAbsorption.x * (c1.x * c1.w - c0.x * c0.w) / a;
+                        adj_segmentation += adj_colorAbsorption.y * (c1.y * c1.w - c0.y * c0.w) / a;
+                        adj_segmentation += adj_colorAbsorption.z * (c1.z * c1.w - c0.z * c0.w) / a;
+                        adj_segmentation *= S * (1 - S);
+                    } else {
+                        adj_segmentation = S * (1 - S) * dot(adj_colorAbsorption, c1 - c0);
+                    }
                 }
                 adj_density += S * adj_densityTmp;
             }

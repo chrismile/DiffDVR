@@ -540,11 +540,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 		.value("Zm", Camera::Zm);
 
 	py::class_<Camera>(m, "Camera")
-		.def_static("compute_matrix", &Camera::computeInverseViewProjectionMatrix,
-			py::doc("Computes the inverse view-projection matrix. Not differentiable!"),
-			py::arg("origin"), py::arg("look_at"), py::arg("up"),
-			py::arg("fov_degrees"), py::arg("width"), py::arg("height"),
-			py::arg("near_clip")=0.1f, py::arg("far_clip")=10.0f)
+        .def_static("compute_matrix", &Camera::computeInverseViewProjectionMatrix,
+                    py::doc("Computes the inverse view-projection matrix. Not differentiable!"),
+                    py::arg("origin"), py::arg("look_at"), py::arg("up"),
+                    py::arg("fov_degrees"), py::arg("width"), py::arg("height"),
+                    py::arg("near_clip")=0.1f, py::arg("far_clip")=10.0f)
+        .def_static("compute_matrix2", &Camera::computeInverseViewProjectionMatrix2,
+                    py::doc("Computes the inverse view-projection matrix. Not differentiable!"),
+                    py::arg("origin"), py::arg("right"), py::arg("up"), py::arg("front"),
+                    py::arg("fov_degrees"), py::arg("width"), py::arg("height"),
+                    py::arg("near_clip")=0.1f, py::arg("far_clip")=10.0f)
 		.def_static("generate_rays", &Camera::generateRays,
 			py::doc(R"doc(
 		Generates per-pixel rays from the given camera matrix.
