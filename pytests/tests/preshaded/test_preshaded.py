@@ -33,10 +33,13 @@ from vis import tfvis
 if __name__=='__main__':
   print(pyrenderer.__doc__)
 
+  #test_case = 'wholebody'
   test_case = 'cloud'
+  #test_case = 'head'
 
   if test_case == 'wholebody':
     cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-03-30_13:58:13/'
+    #cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-03-30_13:58:13_test/'
     #X = 512
     #Y = 512
     #Z = 3172
@@ -48,16 +51,36 @@ if __name__=='__main__':
     sz = 0.5
   elif test_case == 'cloud':
     cameras_dir = '/home/neuhauser/datasets/VPT/scatter_cloud_full_2048_exr/images/'
+    #cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-06-25_16:49:37/'
+    #cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-06-27_20:17:57/'
     X = 1987 // 4
     Y = 1351 // 4
     Z = 2449 // 4
     sx = 1987.0 / 2449.0
     sy = 1351.0 / 2449.0
     sz = 2449.0 / 2449.0
+    #sx = 0.5 * 1987.0 / 2449.0
+    #sy = 0.5 * 1351.0 / 2449.0
+    #sz = 0.5 * 2449.0 / 2449.0
+  elif test_case == 'head':
+    cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-06-28_12:48:49/'
+    #cameras_dir = '/home/neuhauser/Programming/DL/vpt_denoise/out_2024-06-28_12:48:49_test/'
+    X = 256
+    Y = 256
+    Z = 256
+    sx = 0.5 * 0.2 / 0.2
+    sy = 0.5 * 0.2 / 0.2
+    sz = 0.5 * 0.15 / 0.2
 
   cameras_path = cameras_dir + 'cameras.json'
   with open(cameras_path) as f:
     cameras_json = json.load(f)
+    camera0_json = cameras_json[0]
+    if 'aabb' in camera0_json:
+      aabb_json = camera0_json['aabb']
+      sx = aabb_json[1] - aabb_json[0]
+      sy = aabb_json[3] - aabb_json[2]
+      sz = aabb_json[5] - aabb_json[4]
   
   device = "cuda"
   dtype = torch.float32
@@ -69,7 +92,7 @@ if __name__=='__main__':
   #dtype = volume.getDataGpu(0).dtype
 
   test_second_view = False
-  opacity_scaling = 50.0
+  opacity_scaling = 1.0
   tf = torch.tensor([[
     [0.0,0.0,0.0,0.0 *opacity_scaling],
     [1.0,1.0,1.0,1.0 *opacity_scaling]
@@ -155,7 +178,8 @@ if __name__=='__main__':
   write_video = False
   write_hdf5 = False
   write_nc = True
-  epochs = 64
+  #epochs = 1
+  epochs = 128
   iterations = len(cameras_json) * epochs
   reconstructed_color = []
   reconstructed_loss = []
@@ -164,7 +188,8 @@ if __name__=='__main__':
   volume_tensor.requires_grad_()
   variables = []
   variables.append(volume_tensor)
-  learning_rate = 0.05
+  #learning_rate = 0.05
+  learning_rate = 0.02
   optimizer = torch.optim.Adam(variables, lr=learning_rate)
   #optimizer = torch.optim.LBFGS(variables, lr=0.2)
   for iteration in range(iterations):
@@ -221,6 +246,8 @@ if __name__=='__main__':
       reconstructed_color.append(color.detach().cpu().numpy()[0,:,:,0:3])
     reconstructed_loss.append(loss.item())
     loss.backward()
+    #volume_tensor_grad = volume_tensor.grad
+    #print(volume_tensor_grad)
     optimizer.step()
     with torch.no_grad():
       inputs_cpy = inputs.clone()
@@ -250,7 +277,7 @@ if __name__=='__main__':
     outfield_color = ncfile.createVariable('color', np.float32, ('c', 'z', 'y', 'x'))
     #outfield_color[:, :, :, :] = volume_tensor.detach().cpu().numpy().flatten('F')
     #outfield_color.flatten('F') = volume_tensor.detach().cpu().numpy().flatten('F')
-    outfield_color[:, :, :, :] = volume_tensor.detach().cpu().numpy().transpose(0, 3, 2, 1)
+    outfield_color[:, :, :, :] = np.flip(volume_tensor.detach().cpu().numpy().transpose(0, 3, 2, 1), 1)
     ncfile.close()
 
   if write_video:
